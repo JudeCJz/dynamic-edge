@@ -1,0 +1,1 @@
+wifi,cell,hotspot,bt,rotation,location,ringer,airplane,flashlight,glyphs,screenrecord,qr_code_scanner,battery,custom(com.x8bit.bitwarden/.MyVaultTileService),cast,custom(com.android.settings/com.nothing.settings.glyphs.timer.GlyphTimerTileService),reduce_brightness,controls,dnd,night,nfc

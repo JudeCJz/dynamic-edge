@@ -1,0 +1,360 @@
+[0m
+> build · iceman-free
+[0m→ [0mRead .agents/skills/dynamic-edge/SKILL.md 
+[0m→ [0mRead app/src/main/java/com/dynedge/EdgeView.kt 
+[0m✱ [0mGlob "review/shot_*.png" [90m5 matches[0m
+[0m✱ [0mGlob "review/*" [90m20 matches[0m
+> build · iceman-free
+[0m→ [0mRead app/src/main/java/com/dynedge/Prefs.kt 
+[0m$ [0mcd "D:\VS\PROJECTS\FREE WORK\dynamic-edge" && grep -n "fun drawIdle" app/src/main/java/com/dynedge/EdgeView.kt
+843:    private fun drawIdle(c: Canvas, ia: Float) {
+[0m$ [0mcd "D:\VS\PROJECTS\FREE WORK\dynamic-edge" && grep -n "IDLE_STY[0m← [0mWrite review/opencode_looks.md
+Created file successfully: review/opencode_looks.md
+[0m$ [0mmkdir -p review
+(no output)
+> build · iceman-free
+Wrote the design report to `review/opencode_looks.md`.
+
+It includes:
+- A blunt critique of the 5 current idle styles (plain/dot/arc/battery/clock) and the visualizer/gradient issues, grounded in the actual `EdgeView.kt` drawing values.
+- 8 new premium idle designs (~48 dp quarter-circle bean) with polar-geometry specs from the screen corner, stroke/size in dp, accent/black color rules, cheap motion constraints, and conveyed information (recommends shipping: **Glyph Notch**, **Braun Meter**, **Mono Pulse Core**, **Eclipse**).
+- 8 shape-fill/material styles to replace/complement the muddy radial gradient, each with an exact cheap Android Canvas recipe (`BitmapShader` tiles / cached paths/shaders), accent reaction, and perf cost — recommends shipping **Frosted Glass Tint**, **Concentric Grooves**, **Radial Sunburst**, **Radial Dot Matrix**.
+- Precise, premium (non-tacky) music-beat mapping from bass/mid/high energy to closed-bean and open-panel properties with smoothing constants/limits (`τ=50–80ms`, scale capped at `+5%`, no whole-panel bounce/hue/rotation).
+- A short panel design system (4dp spacing scale, icon/hit sizes, stroke widths, restricted accent usage, arc typography).
+
+Notes: I read `.agents/skills/dynamic-edge/SKILL.md`, `EdgeView.kt`, and `Prefs.kt` for context; the `review/shot_*.png` images could not be rendered in this environment (image input unsupported), so visual critiques are based on the implemented drawing code/geometry. No other project files were modified.
+rameTimeNanos
+        wS.step(dt)
+        hS.step(dt)
+        pageS.step(dt)
+        press.step(dt)
+        updateDerived(dt)
+        invalidate()
+        if (allSettled()) {
+            wS.snapTo(wS.target)
+            hS.snapTo(hS.target)
+            pageS.snapTo(pageS.target)
+            press.snapTo(press.target)
+            updateDerived(0f)
+            lastFrameNanos = 0L
+            if (!gestureActive) finishSettle()
+        } else {
+            requestFrames()
+        }
+    }
+
+    private fun allSettled(): Boolean =
+        wS.isSettled(0.3f, 15f) && hS.isSettled(0.3f, 15f) &&
+            pageS.isSettled(0.002f, 0.05f) && press.isSettled(0.002f, 0.1f)
+
+    private fun finishSettle() {
+        if (expandedTarget) {
+            regionExpanded = true
+            settledExpanded = true
+            publishRegion()
+            host?.onSettled(true)
+            removeCallbacks(tickRunnable)
+            if (playing && page == S_MEDIA && screenOn && !hidden) postDelayed(tickRunnable, 1000L)
+            if (Math.round(pageS.value) == S_CLIP && !hidden) requestCapture()
+        } else {
+            regionExpanded = false
+            settledExpanded = false
+            stopSources()
+            regionClosed = closedSize()
+            publishRegion()
+            host?.onSettled(false)
+            if (idleStyleId == 3 && screenOn) readBattery()
+            updateViz()
+            syncLiveTick()
+            syncClosedSize()
+            invalidateBean()
+        }
+    }
+
+    private fun updateDerived(dt: Float) {
+        val span = max(rad - idle, 1f)
+        val p = min((wS.value - idle) / span, (hS.value - idle) / span).coerceIn(0f, 1f)
+        progress = p
+        val t = ((p - 0.55f) / 0.40f).coerceIn(0f, 1f)
+        val sm = t * t * (3f - 2f * t)
+        contentAlpha = if (collapsing) {
+            min(sm, max(0f, contentAlpha - dt / 0.09f))
+        } else {
+            sm
+        }
+    }
+
+    // ================================================================ draw
+
+    private fun buildLivePath() {
+        val pulse = if (beatOn && vizRunning) 1f + beat * (if (expandedTarget) 0.015f else 0.06f) else 1f
+        val ps = press.value * pulse
+        val dw = wS.value * ps
+        val dh = hS.value * ps
+        val ox = width - dw
+        val oy = height - dh
+        val pressGlow = ((1f - press.value) / (1f - PRESS_SCALE)).coerceIn(0f, 1f)
+        glow = max(max(pressGlow, if (dragMode != 0 || arcDrag >= 0) 0.85f else 0f), max(progress * 0.4f, if (beatOn && vizRunning) beat * 0.55f else 0f))
+        // Static shape: keep the Path objects untouched so HWUI reuses their cached geometry.
+        if (dw == lastDw && dh == lastDh && width == lastW && height == lastH && tipPx == lastTip) return
+        lastDw = dw; lastDh = dh; lastW = width; lastH = height; lastTip = tipPx
+        fillPath(path, ox, oy, dw, dh, K, tipPx)
+        rimPath.rewind()
+        rimPath.moveTo(ox, height.toFloat())
+        rimPath.cubicTo(ox, height - K * dh, width - K * dw, oy, width.toFloat(), oy)
+        val r = max(dw, dh) * 1.15f / GR
+        gradScale = r
+        gradMatrix.setTranslate(-width.toFloat(), -height.toFloat())
+        gradMatrix.postScale(1f / r, 1f / r)
+        path.transform(gradMatrix, unitPath)
+    }
+
+    override fun onDraw(c: Canvas) {
+        buildLivePath()
+        val g = glow
+        c.save()
+        c.translate(width.toFloat(), height.toFloat())
+        c.scale(gradScale, gradScale)
+        c.drawPath(unitPath, shapePaint)
+        if (glowOn && g > 0.01f) {
+            glowPaint.alpha = (255f * g + 0.5f).toInt()
+            c.drawPath(unitPath, glowPaint)
+        }
+        c.restore()
+        if (rimOn) {
+            val ra = RIM_REST_A + (RIM_HOT_A - RIM_REST_A) * g
+            rimPaint.color = (mixColor(Color.WHITE, accent, g) and 0xFFFFFF) or ((255f * ra + 0.5f).toInt() shl 24)
+            c.drawPath(rimPath, rimPaint)
+        }
+        val ia = 1f - progress * 3f
+        if (liveWanted && !expandedTarget) {
+            drawLive(c)
+        } else if (ia > 0.01f && !liveWanted) {
+            drawIdle(c, ia)
+        }
+        val a = contentAlpha
+        if (a > 0.004f && resourcesReady) drawContent(c, a)
+    }
+
+    private fun drawContent(c: Canvas, a: Float) {
+        if (!c.isHardwareAccelerated) {
+            drawContentDirect(c, a)
+            return
+        }
+        val off = (1f - a) * dp(16f)
+        // content grows with the melting shape, so no clip is needed
+        val cs = (min(wS.value, hS.value) / rad).coerceIn(0f, 1f)
+        val pos = pageS.value
+        val s = nodeS
+        val sf = s.toFloat()
+        val w = width
+        val h = height
+        if (beatOn && vizRunning && beat > 0.03f && abs(pos - S_MEDIA) < 0.6f) {
+            val fa = pageFade(pos - S_MEDIA)
+            c.save()
+            c.translate(w + off, h + off)
+            c.scale(cs, cs)
+            c.rotate((S_MEDIA - pos) * PAGE_DEG)
+            arcPaint.color = accent
+            arcPaint.strokeWidth = dp(5f) + beat * dp(5f)
+            arcPaint.alpha = (255f * 0.38f * beat * a * fa + 0.5f).toInt()
+            c.drawCircle(itemCx[ID_ART], itemCy[ID_ART], artRad + dp(3f) + beat * dp(5f), arcPaint)
+            c.restore()
+        }
+        for (i in 0 until SECTIONS) {
+            val d = i - pos
+            val fa = pageFade(d)
+            if (fa <= 0.004f) continue
+            var n = nodes[i]
+            if (n == null) {
+                n = RenderNode("edgeSection$i")
+                n.setUseCompositingLayer(true, null)
+                n.setClipToBounds(true)
+                nodes[i] = n
+            }
+            n.setPosition(w - s, h - s, w, h)
+            if (dirty[i]) {
+                val rc = n.beginRecording(s, s)
+                try {
+                    rc.translate(sf, sf)
+                    drawSection(rc, i, 1f)
+                } finally {
+                    n.endRecording()
+                }
+                dirty[i] = false
+            }
+            n.setPivotX(sf)
+            n.setPivotY(sf)
+            n.setRotationZ(d * PAGE_DEG)
+            n.setAlpha(a * fa)
+            n.setScaleX(cs)
+            n.setScaleY(cs)
+            n.setTranslationX(off)
+            n.setTranslationY(off)
+            c.drawRenderNode(n)
+        }
+        c.save()
+        c.translate(w + off, h + off)
+        c.scale(cs, cs)
+        drawPageBars(c, a)
+        drawClose(c, a)
+        c.restore()
+    }
+
+    /** Neighbour-window fade: exactly 0 once a page is settled (|d| >= 0.85), ~55% each mid-swipe. */
+    private fun pageFade(d: Float): Float {
+        val t = (1f - abs(d) / 0.85f).coerceIn(0f, 1f)
+[0m$ [0mcd "D:\VS\PROJECTS\FREE WORK\dynamic-edge" && sed -n '843,980p' app/src/main/java/com/dynedge/EdgeView.kt
+private fun drawIdle(c: Canvas, ia: Float) {
+        val sc = idle / dp(48f)
+        c.save()
+        c.translate(width.toFloat(), height.toFloat())
+        val ps = press.value
+        c.scale(ps, ps)
+        val cen = -0.4244f * idle
+        if (vizOn && idlePlaying) {
+            val bw = dp(2.5f) * sc
+            val pitch = dp(4.5f) * sc
+            val minH = dp(3f) * sc
+            val maxH = 0.34f * idle
+            val lv = visualizer.levels
+            for (i in 0 until 4) {
+                val h = minH + (maxH - minH) * lv[i]
+                val x = cen + (i - 1.5f) * pitch
+                fill.color = if (i == 2) accent else Color.WHITE
+                fill.alpha = (255f * 0.85f * ia + 0.5f).toInt()
+                c.drawRoundRect(x - bw / 2f, cen - h / 2f, x + bw / 2f, cen + h / 2f, bw / 2f, bw / 2f, fill)
+            }
+        } else when (idleStyleId) {
+            1 -> {
+                fill.color = accent
+                fill.alpha = (255f * ia + 0.5f).toInt()
+                c.drawCircle(-0.30f * idle, -0.30f * idle, dp(2f) * sc, fill)
+            }
+            2 -> {
+                val r = 0.70f * idle
+                idleRect.set(-r, -r, r, r)
+                idlePaint.strokeWidth = dp(1.4f) * sc
+                idlePaint.color = C_CREAM
+                idlePaint.alpha = (255f * 0.85f * ia + 0.5f).toInt()
+                c.drawArc(idleRect, 180f + 12f, 66f, false, idlePaint)
+            }
+            3 -> {
+                val r = 0.66f * idle
+                idleRect.set(-r, -r, r, r)
+                idlePaint.strokeWidth = dp(2.6f) * sc
+                idlePaint.color = Color.WHITE
+                idlePaint.alpha = (255f * 0.22f * ia + 0.5f).toInt()
+                c.drawArc(idleRect, 180f + 10f, 70f, false, idlePaint)
+                if (battFrac > 0.01f) {
+                    idlePaint.color = if (charging) Color.WHITE else accent
+                    idlePaint.alpha = (255f * 0.9f * ia + 0.5f).toInt()
+                    c.drawArc(idleRect, 180f + 10f, 70f * battFrac, false, idlePaint)
+                }
+                if (charging) {
+                    val u = 0.07f * idle
+                    boltPath.rewind()
+                    boltPath.moveTo(cen + 0.3f * u, cen - u)
+                    boltPath.lineTo(cen - 0.5f * u, cen + 0.1f * u)
+                    boltPath.lineTo(cen, cen + 0.1f * u)
+                    boltPath.lineTo(cen - 0.3f * u, cen + u)
+                    boltPath.lineTo(cen + 0.5f * u, cen - 0.1f * u)
+                    boltPath.lineTo(cen, cen - 0.1f * u)
+                    boltPath.close()
+                    fill.color = Color.WHITE
+                    fill.alpha = (255f * 0.85f * ia + 0.5f).toInt()
+                    c.drawPath(boltPath, fill)
+                }
+            }
+            4 -> if (clockStr.isNotEmpty()) {
+                clockPaint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 10f, resources.displayMetrics) * sc
+                clockPaint.alpha = (255f * 0.85f * ia + 0.5f).toInt()
+                c.drawText(clockStr, cen, cen - (clockPaint.ascent() + clockPaint.descent()) / 2f, clockPaint)
+            }
+        }
+        c.restore()
+    }
+
+    // ================================================================ live activities
+
+    private fun onTrackChanged(title: String?) {
+        if (!liveOn || expandedTarget || !screenOn || hidden || title.isNullOrBlank()) return
+        if (title == lastLiveTrack) return
+        lastLiveTrack = title
+        putTransient(
+            LiveActivity(
+                "media", LiveActivity.Kind.MEDIA, title.take(40), -1f, 0L, false,
+                R.drawable.ic_music, false, null, null, null
+            ), 3000L
+        )
+    }
+
+    /** Posts a transient activity and removes it after [ms]. */
+    private fun putTransient(a: LiveActivity, ms: Long) {
+        val old = transientRunnables.remove(a.key)
+        if (old != null) removeCallbacks(old)
+        val key = a.key
+        val r = Runnable {
+            transientRunnables.remove(key)
+            LiveBus.remove(key)
+        }
+        transientRunnables[key] = r
+        postDelayed(r, ms)
+        LiveBus.put(a)
+    }
+
+    private fun scheduleTransient(a: LiveActivity?) {
+        if (a == null || a.ongoing || transientRunnables.containsKey(a.key)) return
+        val key = a.key
+        val ms = when (a.kind) {
+            LiveActivity.Kind.MEDIA -> 3000L
+            LiveActivity.Kind.CHARGING -> 3500L
+            else -> 4000L
+        }
+        val r = Runnable {
+            transientRunnables.remove(key)
+            LiveBus.remove(key)
+        }
+        transientRunnables[key] = r
+        postDelayed(r, ms)
+    }
+
+    private fun onLiveChanged() {
+        val top = if (liveOn) LiveBus.top() else null
+        val sec = if (liveOn) LiveBus.second() else null
+        liveCur = top
+        liveSec = sec
+        scheduleTransient(top)
+        scheduleTransient(sec)
+        if (top?.key != liveTitleKey) {
+            liveTitleKey = top?.key
+            liveTitleRaw = null
+            liveTotalMs = 0L
+            if (top != null && top.countDown && top.chronoBase != 0L) {
+                liveTotalMs = max(1000L, top.chronoBase - System.currentTimeMillis())
+            }
+        }
+        rebuildLiveTitle()
+        syncClosedSize()
+        updateViz()
+        syncLiveTick()
+        invalidateBean()
+    }
+
+    /** Morphs the closed bean between idle and live size. */
+    private fun syncClosedSize() {
+> build · iceman-free
+[0m← [0mWrite review/opencode_looks.md
+Wrote file successfully: review/opencode_looks.md
+> build · iceman-free
+Wrote the design report to `review/opencode_looks.md`.
+
+It includes:
+1. **Blunt critique** of current idle styles (`plain`/`dot`/`arc`/`battery`/`clock`) tied to specific `drawIdle` geometry/values and systemic issues.
+2. **8 new idle designs** for the ~48 dp quarter-circle bean (Glyph Notch, Island Pill, Orbit Dot, Twin Slits, Halo Core, Meter Arc, TE Grid, Eclipse) with polar geometry from the corner, dp sizes, colors/alpha, cheap motion rules, and conveyed info.
+3. **8 shape fill styles** (Concentric Grooves, Polar Dot Matrix, Radial Sunburst, Brushed Metal, Carbon Weave, Frosted Tint, Topo Lines, Noise Grain) with cheap Android Canvas recipes (cached paths/BitmapShader), accent behavior, perf cost, and **4 recommended to ship** (1,2,3,5).
+4. **Premium music beat reaction** mapping bass/mid/high/energy to idle scale/rim/glow and open-panel properties, with attack/release smoothing constants and hard limits.
+5. **4b. 6 music visualizer styles** (Rim Spectrum, Radial Rays, Ripple Rings, Dot-Matrix Meter, Rim Waveform, Liquid Bulge) in radial quarter-circle language with geometry, 3–8 band mapping, smoothing, 30 fps cap, and cost.
+6. **Panel design system** covering spacing scale, icon/touch sizes, stroke widths, accent usage, and typography on arcs.
+
+No other project files were modified.

@@ -1,0 +1,3 @@
+gemini exit 3
+opencode exit 0
+codex exit 0

@@ -1,0 +1,14 @@
+You are a top-tier Android motion/visual designer. Do NOT edit any project files except your own report file named in the last line.
+
+Project "Dynamic Edge" (read .agents/skills/dynamic-edge/SKILL.md for context, and look at review/shot_*.png). It is a black bean-shaped notch in the bottom-right screen corner (idle, ~48 dp, its bottom-right edge follows the phone's rounded screen corner) that melts open into a quarter-circle radial panel (radius ~216 dp). Rendering is Android Canvas (hardware accelerated, RenderNode layers), accent colour chosen by the user, black base.
+
+The owner HATES every current idle design: plain bean, accent dot, thin cream arc, battery arc, tiny clock text (see EdgeView idle-style drawing code in app/src/main/java/com/dynedge/EdgeView.kt). They also want alternatives to the current "corner radial gradient" background fill of the shape - e.g. patterns or something else entirely.
+
+Deliver a design report:
+1. Why the current idle designs fail (be blunt, specific).
+2. 8 NEW idle designs for a tiny ~48 dp quarter-circle bean that look premium and intentional (think Nothing Phone glyphs, Apple Dynamic Island, Teenage Engineering, Braun, watch faces). For each: name, exact visual description (geometry in polar coordinates from the screen corner, stroke widths in dp, colours relative to accent/black), motion (if any - must be cheap: static, or event-driven, or <= 30 fps only while something is happening), and what information it conveys (if any).
+3. 8 shape FILL styles to replace/complement the gradient (patterns or materials) that work on a quarter circle and stay legible under white icons: e.g. concentric ring grooves, dot matrix that follows the curve, radial sunburst lines, brushed metal, carbon weave, frosted glass tint, topographic lines, noise grain, aurora... For each: exact drawing recipe implementable cheaply with Android Canvas (BitmapShader of a small generated tile, or a Path drawn once into the cached layer, or a shader), how it reacts to the accent colour, and its perf cost. Recommend which 4 to ship.
+4. How the whole edge should react to music beats (bean closed and panel open) in a premium, not tacky, way: precise mapping from bass/mid/high energy to visual properties, smoothing constants, limits.
+4b. 6 MUSIC VISUALIZER styles for the tiny idle bean and for the open panel's edge, in this app's radial quarter-circle language (e.g. spectrum arc along the curved rim, radial rays from the corner, concentric ripple rings, dot-matrix level meter following the curve, a waveform line traced along the rim, liquid bean that bulges with bass). For each: exact geometry, band mapping (4-8 bands), smoothing, max 30 fps, cost.
+5. A short "design system" for the panel: spacing scale, icon sizes, stroke widths, which elements may use accent, typography on arcs.
+Keep it under ~1000 words, concrete numbers everywhere. Write it to:
