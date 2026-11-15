@@ -34,8 +34,10 @@ class AppPickerActivity : Activity() {
     companion object {
         const val EXTRA_MODE = "mode"
         const val MODE_PAUSE = "pause"
+        const val EXTRA_REPLACE_IDX = "replace_idx"
 
         fun pauseIntent(c: Context): Intent = Intent(c, AppPickerActivity::class.java).putExtra(EXTRA_MODE, MODE_PAUSE)
+        fun replaceIntent(c: Context, idx: Int): Intent = Intent(c, AppPickerActivity::class.java).putExtra(EXTRA_REPLACE_IDX, idx)
     }
 
     private class Item(val label: String, val cn: ComponentName) {
@@ -134,6 +136,14 @@ class AppPickerActivity : Activity() {
             return
         }
         val cur = Prefs.apps(this)
+        val replaceIdx = intent.getIntExtra(EXTRA_REPLACE_IDX, -1)
+        if (replaceIdx in cur.indices) {
+            val list = cur.toMutableList()
+            list[replaceIdx] = item.cn
+            Prefs.setApps(this, list)
+            finish()
+            return
+        }
         if (item.cn !in cur && cur.size < Prefs.MAX_APPS) Prefs.setApps(this, cur + item.cn)
         finish()
     }

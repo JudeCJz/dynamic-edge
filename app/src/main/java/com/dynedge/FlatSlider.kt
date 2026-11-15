@@ -71,7 +71,7 @@ class FlatSlider(ctx: Context) : View(ctx), HGrab {
 
     // inset by the grown thumb so it is never clipped at either end
     private fun left() = paddingLeft + (if (icon != null) 52f else 18f) * d
-    private fun right() = width - paddingRight - 18 * d
+    private fun right() = width - paddingRight - 14 * d
 
     override fun onDraw(c: Canvas) {
         val tg = if (dragging) 1f else 0f
