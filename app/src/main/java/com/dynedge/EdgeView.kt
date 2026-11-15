@@ -2161,6 +2161,12 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     // ================================================================ region
 
+    private val grabPath = Path()
+    private val grabRegion = Region()
+
+    /** True while the panel is open or opening (EdgeService closes it when another app comes to the front). */
+    val isOpen: Boolean get() = expandedTarget && !holdOpen
+
     private fun publishRegion() {
         val ww = width
         val hh = height
@@ -2192,10 +2198,13 @@ class EdgeView(ctx: Context) : View(ctx) {
             if (!regionExpanded) {
                 // invisible grab square at the bottom-right corner (never smaller than the bean + slop): a swipe
                 // starting just above / left of the bean comes here, not to the launcher underneath
+                // shaped like the bean (a quarter circle around the corner), never a square: the square's far
+                // corner blocked taps on things next to the edge
                 ex = max(w, grabPx.toFloat())
-                val g = ceil(ex).toInt()
-                if (mirror) region.op(0, max(0, hh - g), min(ww, g), hh, Region.Op.UNION)
-                else region.op(max(0, ww - g), max(0, hh - g), ww, hh, Region.Op.UNION)
+                grabPath.rewind()
+                grabPath.addCircle(if (mirror) 0f else ww.toFloat(), hh.toFloat(), ex, Path.Direction.CW)
+                grabRegion.setPath(grabPath, clipRegion)
+                region.op(grabRegion, Region.Op.UNION)
             }
         }
         host?.onRegionChanged(region)

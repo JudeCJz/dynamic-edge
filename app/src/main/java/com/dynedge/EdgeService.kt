@@ -396,6 +396,11 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 // the clipboard popup goes away when another window comes to the front (back gesture, app switch)
                 clipPopup?.onForeignWindow(event.packageName)
+                // an open panel left behind by HOME / an app switch would keep blocking touches: close it
+                val ep = event.packageName?.toString()
+                if (ep != null && ep != packageName && ep != "com.android.systemui") {
+                    edge?.let { if (it.isOpen) it.collapse() }
+                }
                 // hot path: a set lookup on the framework's package string, nothing else
                 val set = pauseSet
                 if (set.isEmpty()) return
