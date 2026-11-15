@@ -86,6 +86,32 @@ page scrolled to that section); category pages are flat; the preview now draws a
 corner; "Themed" is now "Monochrome" and the App icons choice is also on the Apps page.
 Built but not checked on screen: DEVICE badges on one line with the battery badge, AppPickerActivity icons.
 
+## Status 2026-11-16 00:32 (Claude, v1.5.0 installed)
+- v1.4.0 crashed on opening settings: Studio.LONG_ACTIONS was a stored val declared after init{} (null while the page
+  was built). Now a getter. Rule: Studio builds its page in init{}, so no stored properties below it.
+- Added since v1.2.0: long-press actions (Prefs.LA_*), Long press drop-down, Live test section (LiveTest.kt, "test:"
+  LiveBus keys, demo music via DemoBeat), My tiles delete X, tray hides TileSupport.usable == false, overlay skips them,
+  Quick/App rings angular margins, floating = equal gap (position slider removed), permissions banner, colour presets +
+  saved colours, true pixel mode (no-AA layer + full-res pixel-font text replay), glass mode (Glass.kt; real blur
+  unavailable on vivo I2202: isCrossWindowBlurEnabled false, so fallback frosted look).
+- Checked on phone: settings opens, glass and pixel modes draw, no crash. Rest is the user's testing.
+
+## Status 2026-11-15 23:56 (Claude, v1.2.0 installed, phone 1080x2400)
+Built by Sonnet subagents, lead-reviewed, installed; only the settings page and idle bean were seen on screen (no crash).
+- Live bean (timer/download/charging) no longer dimmed (fade was tied to open progress); LIVE_SCALE 1.8, bigger icon/text.
+- Notifications: app name first, rows from the outermost ring inward, adaptive pitch, max 5 (Prefs.rows(..., max)).
+- MediaBridge "ghost": last track (prefs file media_last + filesDir/media_last.png) stays after the player closes;
+  play/tap launches the app and autoplays (session play, else explicit MEDIA_BUTTON broadcast).
+- Ring radius sliders: w_quick_ring_in/out (Quick editor tray), w_apps_ring_in/out (Apps editor); AppRing.scale.
+- Visualizer: polls getFft every vsync, max capture size, one smoothing stage, raw-bass onset `kick`, 60/180 ms delay line.
+- Shortcut tiles: ShortcutStore/ShortcutCatalog/ShortcutPickerActivity, spec sc:<uuid>, prefs quick_shortcuts (see SKILL.md).
+- IconTheme: every icon normalised to one shape (icon_corner %), round/glyph icons re-plated, icon_pixel pixelate.
+- Body colour (KEY_BASE) with ink flip on light bodies; floating edge (float_on, float_gap), position (edge_pos),
+  left side (side_left, canvas mirrored with text/icons un-mirrored), long-press hide (hide_s).
+- Pixel mode (pixel_mode, pixel_size; bottom of settings): PixelMode.kt, res/font/pixel.ttf from tools/pixelfont/make_font.py,
+  overlay drawn via EdgeView.pixelHook -> PixelLayer (software canvas path), icons pixelated.
+NOT hand-tested: all of the above on the phone. Tune IconTheme thresholds (coverage 0.7, zoom 1.08) and viz WEIGHT/EDGE_HZ if needed.
+
 ## Status 2026-11-11 15:40 (OpenCode, Nothing phone) - READ THIS FIRST
 - **The settings screen is ONE scrolling page** with category headings (Look, Shape, Windows, Music, Motion,
   Apps, More). The tab bar and the horizontal pager are gone. Every setting has a visible text caption

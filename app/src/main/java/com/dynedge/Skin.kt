@@ -39,6 +39,9 @@ object Skin {
     const val RADIUS = 14           // dp, corner radius of the few rounded surfaces
     const val CHIP_RADIUS = 18      // dp, pill radius of the section chips
 
+    /** [r] corner radius, or 0 in pixel mode (everything square). */
+    fun corner(ctx: Context, r: Float): Float = if (PixelMode.on(ctx)) 0f else r
+
     /** The user's theme colour: headers, toggles, sliders, chips, selection rings. */
     fun accent(ctx: Context): Int = Prefs.accent(ctx)
 

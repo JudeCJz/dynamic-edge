@@ -15,13 +15,20 @@ internal class DemoBeat {
         private set
     var energy = 0f
         private set
+    /** Onset strength for the step just taken (0 between beats). */
+    var kick = 0f
+        private set
     private var t = 0f
     private var since = 0f
 
     fun step(dt: Float) {
         t += dt
         since += dt
-        if (since >= PERIOD) since -= PERIOD
+        kick = 0f
+        if (since >= PERIOD) {
+            since -= PERIOD
+            kick = 0.9f
+        }
         val env = exp(-since * 7f)
         val off = (since + PERIOD * 0.5f) % PERIOD
         val env2 = exp(-off * 10f)

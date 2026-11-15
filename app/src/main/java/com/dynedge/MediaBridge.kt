@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -15,6 +16,9 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.KeyEvent
+import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * Follows the user's music session: title, artist, art, playback state, position and transport.
@@ -46,7 +50,14 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
     var durationMs: Long = 0L
         private set
 
-    val hasSession: Boolean get() = controller != null
+    private var ghostActive = false
+    private var savedKey: String? = null
+    private var savedPos = 0L
+
+    val hasSession: Boolean get() = controller != null || ghostActive
+
+    /** True when no live session exists and the saved last track is shown instead. */
+    val isGhost: Boolean get() = controller == null && ghostActive
     val isPlaying: Boolean get() = playback?.state == PlaybackState.STATE_PLAYING
 
     private fun fire() = onChange()
@@ -84,6 +95,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
 
         private fun repick() {
             if (!started) return
+            tryAutoplay(watched)
             val cur = controller
             if (cur != null && sameSession(cur, c)) return
             val best = pick(watched) ?: return
@@ -174,6 +186,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
             }
         }
         unwatch()
+        if (controller != null) persist(true)
         controller?.let {
             try {
                 it.unregisterCallback(callback)
@@ -187,9 +200,11 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
         title = null
         artist = null
         durationMs = 0L
+        ghostActive = false
     }
 
     fun positionMs(): Long {
+        if (isGhost) return ghost?.pos ?: 0L
         val s = playback ?: return 0L
         var p = s.position
         if (s.state == PlaybackState.STATE_PLAYING) {
@@ -204,7 +219,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
     fun playPause() {
         // No allowed session = nothing to resume. Never dispatch a global media key here: that could
         // start a blocked background session (e.g. the Essential News podcast).
-        val c = controller ?: return
+        val c = controller ?: run { resumeGhost(); return }
         remember(c)
         try {
             if (isPlaying) c.transportControls.pause() else c.transportControls.play()
@@ -213,7 +228,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
     }
 
     fun next() {
-        val c = controller ?: return
+        val c = controller ?: run { resumeGhost(); return }
         remember(c)
         try {
             c.transportControls.skipToNext()
@@ -222,7 +237,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
     }
 
     fun prev() {
-        val c = controller ?: return
+        val c = controller ?: run { resumeGhost(); return }
         remember(c)
         try {
             c.transportControls.skipToPrevious()
@@ -246,7 +261,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
     }
 
     fun openPlayer(): Boolean {
-        val c = controller ?: return false
+        val c = controller ?: return resumeGhost()
         try {
             val pi = c.sessionActivity
             if (pi != null) {
@@ -260,6 +275,136 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(i)
             true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Ghost mode: launches the saved app and arms an autoplay for its session. Never a global media key. */
+    private fun resumeGhost(): Boolean {
+        val g = ghost ?: return false
+        if (!ghostActive) return false
+        val pkg = g.pkg
+        val i = app.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        pendingPkg = pkg
+        pendingUntil = SystemClock.elapsedRealtime() + AUTOPLAY_MS
+        try {
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(i)
+        } catch (e: Exception) {
+            pendingPkg = null
+            return false
+        }
+        main.postDelayed({ if (pendingPkg == pkg) sendPlayKey(pkg) }, BACKUP_MS)
+        if (started) tryAutoplay(querySessions())
+        return true
+    }
+
+    private fun sendPlayKey(pkg: String) {
+        try {
+            val rs = app.packageManager.queryBroadcastReceivers(Intent(Intent.ACTION_MEDIA_BUTTON).setPackage(pkg), 0)
+            for (ri in rs) {
+                val ai = ri.activityInfo ?: continue
+                for (action in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                    app.sendBroadcast(
+                        Intent(Intent.ACTION_MEDIA_BUTTON)
+                            .setComponent(ComponentName(ai.packageName, ai.name))
+                            .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, KeyEvent.KEYCODE_MEDIA_PLAY))
+                    )
+                }
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    /** Plays once the pending package shows a session; expires after the deadline. */
+    private fun tryAutoplay(list: List<MediaController>) {
+        val pkg = pendingPkg ?: return
+        if (SystemClock.elapsedRealtime() > pendingUntil) {
+            pendingPkg = null
+            return
+        }
+        val c = list.firstOrNull { pkgOf(it) == pkg } ?: return
+        pendingPkg = null
+        try {
+            c.transportControls.play()
+        } catch (e: Exception) {
+        }
+    }
+
+    // ---- last track memory ----------------------------------------------------------
+
+    private class Ghost(
+        val pkg: String,
+        val title: String,
+        val artist: String?,
+        val dur: Long,
+        var pos: Long,
+        var art: Bitmap?
+    )
+
+    /** Saves the live track (title required). force = write even if the position barely moved. */
+    private fun persist(force: Boolean) {
+        val c = controller ?: return
+        val t = title
+        val pkg = pkgOf(c)
+        if (t.isNullOrBlank() || pkg == null) return
+        val key = "$pkg|$t|$artist|$durationMs"
+        val pos = positionMs()
+        if (key == savedKey && !force && (isPlaying || kotlin.math.abs(pos - savedPos) < 1000L)) return
+        val changed = key != savedKey
+        savedKey = key
+        savedPos = pos
+        if (changed && art == null) saveArt(null)
+        ghost = Ghost(pkg, t, artist, durationMs, pos, art)
+        ghostLoaded = true
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("pkg", pkg).putString("title", t).putString("artist", artist)
+            .putLong("dur", durationMs).putLong("pos", pos).apply()
+    }
+
+    private fun saveArt(b: Bitmap?) {
+        val g = ghost
+        if (g != null && g.pkg == controller?.let { pkgOf(it) } && g.title == title) g.art = b
+        val dir = app.filesDir
+        IO.execute {
+            try {
+                val f = File(dir, ART_FILE)
+                if (b == null) {
+                    f.delete()
+                } else {
+                    val tmp = File(dir, "$ART_FILE.tmp")
+                    tmp.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    tmp.renameTo(f)
+                }
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    /** Loads the saved track once; null when none. */
+    private fun loadGhost(): Ghost? {
+        if (ghostLoaded) return ghost
+        ghostLoaded = true
+        val sp = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val pkg = sp.getString("pkg", null)
+        val t = sp.getString("title", null)
+        if (pkg == null || t.isNullOrBlank()) return null
+        val a = try {
+            val f = File(app.filesDir, ART_FILE)
+            if (f.exists()) BitmapFactory.decodeFile(f.path) else null
+        } catch (e: Exception) {
+            null
+        }
+        ghost = Ghost(pkg, t, sp.getString("artist", null), sp.getLong("dur", 0L), sp.getLong("pos", 0L), a)
+        return ghost
+    }
+
+    private fun ghostValid(): Boolean {
+        val g = loadGhost() ?: return false
+        if (g.pkg in blockedSet(app)) return false
+        return try {
+            app.packageManager.getLaunchIntentForPackage(g.pkg) != null
         } catch (e: Exception) {
             false
         }
@@ -293,6 +438,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
     private fun select(list: List<MediaController>) {
         val best = pick(list)
         val current = controller
+        if (current != null && best == null) persist(true)
         val same = best != null && current != null && best.sessionToken == current.sessionToken
         if (!same) {
             if (current != null) {
@@ -311,6 +457,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
         }
         if (best != null && stateOf(best) == PlaybackState.STATE_PLAYING) remember(best)
         refresh()
+        tryAutoplay(list)
     }
 
     /** The selection rule above. Reads every entry point through the block filter. */
@@ -379,13 +526,16 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
         val c = controller
         if (c == null) {
             playback = null
-            title = null
-            artist = null
-            durationMs = 0L
             sourceArt = null
-            art = null
+            ghostActive = ghostValid()
+            val g = if (ghostActive) ghost else null
+            title = g?.title
+            artist = g?.artist
+            durationMs = g?.dur ?: 0L
+            art = g?.art
             return
         }
+        ghostActive = false
         playback = try {
             c.playbackState
         } catch (e: Exception) {
@@ -409,6 +559,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
         )
         durationMs = if (meta == null) 0L else maxOf(0L, meta.getLong(MediaMetadata.METADATA_KEY_DURATION))
         updateArt(meta)
+        persist(false)
     }
 
     private fun firstText(meta: MediaMetadata, vararg keys: String): String? {
@@ -429,6 +580,7 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
         sourceArt = src
         // The previous scaled bitmap is not recycled: the view may still be drawing it. GC reclaims it.
         art = if (src == null) null else centerCrop(src)
+        if (!title.isNullOrBlank()) saveArt(art)
     }
 
     private fun centerCrop(src: Bitmap): Bitmap? {
@@ -450,6 +602,17 @@ class MediaBridge(private val ctx: Context, private val artPx: Int, private val 
 
         /** A paused session older than this is not "recently active" and is not picked on its own. */
         private const val RECENT_MS = 30 * 60 * 1000L
+        private const val PREFS = "media_last"
+        private const val ART_FILE = "media_last.png"
+        private const val AUTOPLAY_MS = 12_000L
+        private const val BACKUP_MS = 2_500L
+        private val IO = Executors.newSingleThreadExecutor()
+
+        // Last track, shared across instances and stop()/start(); backed by prefs + file.
+        private var ghost: Ghost? = null
+        private var ghostLoaded = false
+        private var pendingPkg: String? = null
+        private var pendingUntil = 0L
 
         // The last session the user actually played. Kept across stop()/start() so closing and
         // reopening the edge returns to the user's player instead of another app's idle session.

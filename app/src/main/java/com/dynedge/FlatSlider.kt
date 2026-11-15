@@ -37,7 +37,7 @@ class FlatSlider(ctx: Context) : View(ctx), HGrab {
         set(v) { field = v; invalidate() }
     /** Leading icon (tinted [Skin.TEXT_2], accent while dragging). */
     var icon: Drawable? = null
-        set(v) { field = v?.mutate(); invalidate() }
+        set(v) { field = v?.mutate()?.let { PixelMode.wrapIcon(context, it) }; invalidate() }
     var onStart: () -> Unit = {}
     var onChange: (Float) -> Unit = {}
     var onStop: () -> Unit = {}
@@ -47,11 +47,16 @@ class FlatSlider(ctx: Context) : View(ctx), HGrab {
 
     private val d = resources.displayMetrics.density
     private val slop = ViewConfiguration.get(ctx).scaledTouchSlop.toFloat()
-    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Skin.TRACK }
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    // pixel mode: square stepped blocks, a square thumb, the pixel font
+    private val px = PixelMode.on(ctx)
+    private val grid = if (px) PixelMode.gridPx(ctx) else 0f
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Skin.TRACK; isAntiAlias = !px }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !px }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, resources.displayMetrics)
-        typeface = Typeface.DEFAULT_BOLD
+        textSize = if (px) maxOf(10f, Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, resources.displayMetrics) / 10f) * 10f)
+            else TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, resources.displayMetrics)
+        typeface = PixelMode.typeface(ctx) ?: Typeface.DEFAULT_BOLD
+        isAntiAlias = !px
         textAlign = Paint.Align.CENTER
     }
     private val rect = RectF()
@@ -92,16 +97,20 @@ class FlatSlider(ctx: Context) : View(ctx), HGrab {
             it.setTint(if (dragging) accent else Skin.TEXT_2)
             it.draw(c)
         }
-        val th = (4 + 4 * e) * d
+        val th = if (px) PixelMode.snap((4 + 4 * e) * d, grid).coerceAtLeast(grid) else (4 + 4 * e) * d
         val l = left()
         val r = right()
-        rect.set(l, cy - th / 2, r, cy + th / 2)
-        c.drawRoundRect(rect, th / 2, th / 2, track)
         val f = if (max > min) (value - min) / (max - min) else 0f
         val fr = l + (r - l) * f
         fill.color = accent
-        rect.set(l, cy - th / 2, fr, cy + th / 2)
-        c.drawRoundRect(rect, th / 2, th / 2, fill)
+        if (px) {
+            drawBlocks(c, l, r, fr, cy, th)
+        } else {
+            rect.set(l, cy - th / 2, r, cy + th / 2)
+            c.drawRoundRect(rect, th / 2, th / 2, track)
+            rect.set(l, cy - th / 2, fr, cy + th / 2)
+            c.drawRoundRect(rect, th / 2, th / 2, fill)
+        }
         val t = tick
         if (t != null && max > min) {
             val tx = l + (r - l) * (t - min) / (max - min)
@@ -116,12 +125,25 @@ class FlatSlider(ctx: Context) : View(ctx), HGrab {
             val hw = 10 * d + (maxOf(16 * d, tw / 2 + 9 * d) - 10 * d) * e
             val hh = (10 + 4 * e) * d
             rect.set(fr - hw, cy - hh, fr + hw, cy + hh)
-            c.drawRoundRect(rect, hh, hh, fill)
+            c.drawPill(px, rect.left, rect.top, rect.right, rect.bottom, hh, fill)
             text.color = Skin.onColor(accent)
             text.alpha = (255f * e + 0.5f).toInt()
             c.drawText(chars, 0, n, fr, cy - (text.ascent() + text.descent()) / 2f, text)
         } else {
-            c.drawCircle(fr, cy, 10 * d, fill)
+            c.drawDisc(px, fr, cy, if (px) PixelMode.snap(8 * d, grid).coerceAtLeast(grid) else 10 * d, fill)
+        }
+    }
+
+    /** Pixel mode track: blocks of 2 art pixels with a 1 pixel gap; the blocks up to the value are filled. */
+    private fun drawBlocks(c: Canvas, l: Float, r: Float, fr: Float, cy: Float, th: Float) {
+        val step = grid * 3f
+        val bw = grid * 2f
+        val top = PixelMode.snap(cy - th / 2f, grid)
+        var x = l
+        while (x + bw <= r + 0.5f) {
+            val p = if (x + bw / 2f <= fr) fill else track
+            c.drawRect(x, top, x + bw, top + th, p)
+            x += step
         }
     }
 

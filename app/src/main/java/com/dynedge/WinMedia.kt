@@ -29,13 +29,15 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
     private val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = h.sp(14f)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        typeface = h.face(Typeface.create("sans-serif-medium", Typeface.NORMAL))
     }
     private val artistPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = h.face(android.graphics.Typeface.DEFAULT)
         color = EdgeView.C_GREY
         textSize = h.sp(12f)
     }
     private val timePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = h.face(android.graphics.Typeface.DEFAULT)
         color = EdgeView.C_GREY
         textAlign = Paint.Align.CENTER
         textSize = h.sp(10f)
@@ -114,8 +116,8 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
         val titleR = artistR + dp(17f)
         mArcR = min(max(0.88f * rad, titleR + dp(29f)), rad - dp(10f))
         mArcOval.set(-mArcR, -mArcR, mArcR, mArcR)
-        arcPath(titlePath, titleR, MT_A0, MT_A1)
-        arcPath(artistPath, artistR, MT_A0, MT_A1)
+        textArcPath(titlePath, titleR, MT_A0, MT_A1)
+        textArcPath(artistPath, artistR, MT_A0, MT_A1)
         val span = Math.toRadians((MT_A1 - MT_A0).toDouble()).toFloat()
         titleLen = titleR * span
         artistLen = artistR * span
@@ -238,6 +240,9 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
     override fun draw(c: Canvas, a: Float) {
         val ai = (255f * a + 0.5f).toInt()
         val fill = h.fillP
+        titlePaint.color = h.ink
+        artistPaint.color = h.cGrey
+        timePaint.color = h.cGrey
         // art circle (tap = play/pause)
         run {
             val x = cx[ART]
@@ -250,18 +255,19 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
             if (artBmp != null) {
                 c.save()
                 c.translate(x, y)
+                h.unflip(c)
                 artPaint.alpha = ai
                 c.drawCircle(0f, 0f, artRad, artPaint)
                 c.restore()
             } else {
-                fill.color = EdgeView.C_FILL
+                fill.color = h.cFill
                 fill.alpha = ai
                 c.drawCircle(x, y, artRad, fill)
             }
             val pi = h.icon(if (playing) R.drawable.ic_pause else R.drawable.ic_play, false)
             pi.bounds = playIconRect
             pi.alpha = (255f * 0.75f * a + 0.5f).toInt()
-            pi.draw(c)
+            h.drawIc(c, pi)
             if (ps) {
                 h.ringPaint.alpha = ai
                 c.drawCircle(x, y, artRad + dp(3f), h.ringPaint)
@@ -269,8 +275,8 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
             }
         }
         if (optSkip) {
-            drawBtn(c, PREV, EdgeView.C_FILL, R.drawable.ic_skip_back, false, a, a)
-            drawBtn(c, NEXT, EdgeView.C_FILL, R.drawable.ic_skip_forward, false, a, a)
+            drawBtn(c, PREV, h.cFill, R.drawable.ic_skip_back, false, a, a)
+            drawBtn(c, NEXT, h.cFill, R.drawable.ic_skip_forward, false, a, a)
         }
 
         // title / artist on arcs
@@ -278,15 +284,15 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
         artistPaint.alpha = ai
         timePaint.alpha = ai
         if (optText) {
-            c.drawTextOnPath(titleShown, titlePath, titleOff, 0f, titlePaint)
-            c.drawTextOnPath(artistShown, artistPath, artistOff, 0f, artistPaint)
+            h.arcText(c, titleShown, titlePath, titleOff, titlePaint)
+            h.arcText(c, artistShown, artistPath, artistOff, artistPaint)
         }
         if (!optSeek) return
 
         // progress arc
         val ap = h.arcPaint
-        ap.strokeWidth = dp(3.5f)
-        ap.color = EdgeView.C_TRACK
+        ap.strokeWidth = h.sw(dp(3.5f))
+        ap.color = h.cTrack
         ap.alpha = ai
         c.drawArc(mArcOval, 180f + SL_A0, SL_A1 - SL_A0, false, ap)
         if (progressFrac > 0.002f) {
@@ -298,8 +304,8 @@ internal class WinMedia(h: EdgeView) : Win(h, "media", 3) {
         fill.color = h.accent
         fill.alpha = ai
         c.drawCircle(-mArcR * cos(ang).toFloat(), -mArcR * sin(ang).toFloat(), dp(4.5f), fill)
-        c.drawText(elapsedStr, elapsedX, elapsedY, timePaint)
-        c.drawText(totalStr, totalX, totalY, timePaint)
+        h.text(c, elapsedStr, elapsedX, elapsedY, timePaint)
+        h.text(c, totalStr, totalX, totalY, timePaint)
     }
 
     // ---------------------------------------------------------------- touch

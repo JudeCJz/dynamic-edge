@@ -136,6 +136,7 @@ class ClipboardActivity : Activity() {
         }
         root.addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        PixelMode.apply(this)
         reload()
     }
 

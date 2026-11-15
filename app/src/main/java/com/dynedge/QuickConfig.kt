@@ -27,7 +27,7 @@ internal class QuickGeom {
     fun ringR(r: Int): Float = if (r == 0) ri else ro
 
     /** [rad] open radius px, [d] density, [idlePx] idle bean size px, [brad] max chip radius px. */
-    fun compute(rad: Float, d: Float, idlePx: Float, nArcs: Int, brad: Float) {
+    fun compute(rad: Float, d: Float, idlePx: Float, nArcs: Int, brad: Float, inPct: Float = 100f, outPct: Float = 100f) {
         arcR[0] = min(0.88f * rad, rad - 14f * d)
         arcR[1] = if (nArcs >= 2) arcR[0] - (2f * 13f * d + 4f * d) else arcR[0]
         br = min(brad, 20f * d)
@@ -39,22 +39,42 @@ internal class QuickGeom {
         ri = max(0.40f * rad, x + 56f * d)
         if (ro - ri < 44f * d) ri = ro - 44f * d
         ri = ri.coerceAtLeast(br + 8f * d)
+        // user ring radius (percent; 100 = the layout above). Outer never goes past its slider clearance,
+        // inner keeps the close X clear and stays one tile (44 dp) inside the outer ring.
+        val roMax = ro
+        val riDef = ri
+        ro = if (outPct >= 100f) roMax else max(roMax * outPct / 100f, min(roMax, br + 52f * d))
+        val riFloor = max(br + 8f * d, min(riDef, x + 40f * d))
+        ri = (riDef * inPct / 100f).coerceAtLeast(riFloor)
+        if (ro - ri < 44f * d) ri = (ro - 44f * d).coerceAtLeast(br + 8f * d)
+        // each ring gets its own angular window: margin = asin((chip + 6 dp + press ring) / r) so the full chip
+        // never touches the bottom or side edge; both windows are centred on 45 degrees, so the rings line up on
+        // the diagonal and the outer ring keeps room for more tiles than the inner one
         for (r in 0..1) {
-            val rr = ringR(r)
-            cap[r] = capFor(rr, d)
-            chip[r] = chipFor(rr, cap[r], d)
+            val rr = ringR(r).toDouble().coerceAtLeast(1.0)
+            val m = Math.toDegrees(kotlin.math.asin(((br + 9f * d) / rr).coerceAtMost(1.0))).coerceAtMost(40.0)
+            margin[r] = m.toFloat()
+            span[r] = 90.0 - 2.0 * m
+            cap[r] = capFor(rr.toFloat(), span[r], d)
+            chip[r] = chipFor(rr.toFloat(), cap[r], span[r], d)
         }
     }
 
-    private fun capFor(r: Float, d: Float): Int {
+    val margin = floatArrayOf(12f, 12f)   // degrees from each screen edge to the first/last slot, per ring
+    val span = doubleArrayOf(66.0, 66.0)  // 90 - 2 * margin, per ring
+
+    /** Angle in degrees of slot [k] of [n] on ring [r]: evenly inside that ring's window (45 when n is 1). */
+    fun angle(r: Int, k: Int, n: Int): Float = if (n <= 1) 45f else margin[r] + (k * span[r] / (n - 1)).toFloat()
+
+    private fun capFor(r: Float, span: Double, d: Float): Int {
         var n = QuickConfig.RING_MAX
-        while (n > 1 && 2f * r * sin(Math.toRadians(SPAN / (n - 1) / 2.0)).toFloat() < 44f * d) n--
+        while (n > 1 && 2f * r * sin(Math.toRadians(span / (n - 1) / 2.0)).toFloat() < 44f * d) n--
         return n
     }
 
-    private fun chipFor(r: Float, n: Int, d: Float): Float {
+    private fun chipFor(r: Float, n: Int, span: Double, d: Float): Float {
         if (n <= 1) return br
-        val half = r * sin(Math.toRadians(SPAN / (n - 1) / 2.0)).toFloat()
+        val half = r * sin(Math.toRadians(span / (n - 1) / 2.0)).toFloat()
         return min(br, half - 1.5f * d).coerceAtLeast(10f * d)
     }
 
@@ -72,7 +92,8 @@ internal class QuickGeom {
             val rad = Prefs.openDp(ctx) * d
             val g = QuickGeom()
             // idle as EdgeView.idleSizePx (ceil) so the editor and the overlay always get the same capacities
-            g.compute(rad, d, kotlin.math.ceil(Prefs.idleDp(ctx) * d), nArcs, bradFor(rad, d))
+            g.compute(rad, d, kotlin.math.ceil(Prefs.idleDp(ctx) * d), nArcs, bradFor(rad, d),
+                Prefs.ringPct(ctx, Prefs.KEY_QUICK_RING_IN, Prefs.RING_IN_MAX), Prefs.ringPct(ctx, Prefs.KEY_QUICK_RING_OUT))
             return g
         }
     }
@@ -178,7 +199,8 @@ object QuickConfig {
     }
 
     private fun valid(id: String): Boolean =
-        id.isNotEmpty() && (id in Tiles.ALL || id.startsWith(QsCatalog.SYS) || id.startsWith(QsCatalog.CUS))
+        id.isNotEmpty() && (id in Tiles.ALL || id.startsWith(QsCatalog.SYS) || id.startsWith(QsCatalog.CUS) ||
+            ShortcutStore.isId(id))
 
     /**
      * Fits [l] to ring capacities [cap]: each ring becomes exactly cap[r] slots. A ring that is too long drops its

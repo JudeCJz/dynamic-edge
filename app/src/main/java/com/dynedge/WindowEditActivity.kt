@@ -24,6 +24,7 @@ open class WindowEditActivity : Activity() {
         val s = Studio(this, mode())
         studio = s
         setContentView(s.root)
+        PixelMode.apply(this)
     }
 
     override fun onResume() {

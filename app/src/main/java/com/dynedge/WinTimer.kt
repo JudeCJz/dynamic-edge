@@ -56,11 +56,11 @@ internal class WinTimer(h: EdgeView) : Win(h, "timer", 10) {
     private val valuePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        typeface = h.face(Typeface.create("sans-serif-medium", Typeface.NORMAL))
     }
     private val chipPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
-        typeface = Typeface.DEFAULT_BOLD
+        typeface = h.face(Typeface.DEFAULT_BOLD)
         textSize = h.sp(12f)
     }
 
@@ -223,46 +223,47 @@ internal class WinTimer(h: EdgeView) : Win(h, "timer", 10) {
     private fun drawCountdown(c: Canvas, a: Float) {
         val ai = (255f * a + 0.5f).toInt()
         val ap = h.arcPaint
-        ap.strokeWidth = dp(6f)
-        ap.color = EdgeView.C_TRACK
+        valuePaint.color = h.ink
+        ap.strokeWidth = h.sw(dp(6f))
+        ap.color = h.cTrack
         ap.alpha = ai
         c.drawArc(dial, 180f + SL_A0, SL_A1 - SL_A0, false, ap)
         val ring = mode == M_RING
         val unk = mode == M_LINKED && linkedUnknown
         val f = if (ring || unk) 1f else if (totMs > 0L) (remMs.toFloat() / totMs).coerceIn(0f, 1f) else 0f
         // linked timers are not ours: white arc; ours use the accent
-        ap.color = if (mode == M_LINKED) Color.WHITE else h.accent
+        ap.color = if (mode == M_LINKED) h.ink else h.accent
         ap.alpha = if (mode == M_PAUSED || (mode == M_LINKED && linkedPaused)) (ai * 0.5f).toInt()
         else if (unk) (ai * 0.35f).toInt() else ai
         if (f > 0.002f) c.drawArc(dial, 180f + SL_A0, (SL_A1 - SL_A0) * f, false, ap)
         val ang = Math.toRadians((SL_A0 + (SL_A1 - SL_A0) * f).toDouble())
-        h.fillP.color = Color.WHITE
+        h.fillP.color = h.ink
         h.fillP.alpha = ai
         if (!unk) c.drawCircle(-dialR * cos(ang).toFloat(), -dialR * sin(ang).toFloat(), dp(7f), h.fillP)
         valuePaint.alpha = if (mode == M_PAUSED || (mode == M_LINKED && linkedPaused)) (ai * 0.6f).toInt() else ai
-        c.drawText(if (ring) "0:00" else if (unk) "--:--" else runStr, valueX, valueY, valuePaint)
+        h.text(c, if (ring) "0:00" else if (unk) "--:--" else runStr, valueX, valueY, valuePaint)
         when (mode) {
             M_RING -> drawBtn(c, STOP_RING, h.accent, R.drawable.ic_x, true, a, a)
             M_LINKED -> {
-                drawBtn(c, OPEN, EdgeView.C_FILL, R.drawable.ic_alarm, false, a, a)
-                drawBtn(c, CANCEL, EdgeView.C_FILL, R.drawable.ic_x, false, a, a)
+                drawBtn(c, OPEN, h.cFill, R.drawable.ic_alarm, false, a, a)
+                drawBtn(c, CANCEL, h.cFill, R.drawable.ic_x, false, a, a)
                 if (linkedToggle) {
-                    drawBtn(c, PAUSE, EdgeView.C_FILL, if (linkedPaused) R.drawable.ic_play else R.drawable.ic_pause, false, a, a)
+                    drawBtn(c, PAUSE, h.cFill, if (linkedPaused) R.drawable.ic_play else R.drawable.ic_pause, false, a, a)
                 }
                 if (linkedPlus) {
-                    drawBtn(c, PLUS, EdgeView.C_FILL, 0, false, a, a)
-                    chipPaint.color = Color.WHITE
+                    drawBtn(c, PLUS, h.cFill, 0, false, a, a)
+                    chipPaint.color = h.ink
                     chipPaint.alpha = ai
-                    c.drawText("+1", cx[PLUS], cy[PLUS] - (chipPaint.ascent() + chipPaint.descent()) / 2f, chipPaint)
+                    h.text(c, "+1", cx[PLUS], cy[PLUS] - (chipPaint.ascent() + chipPaint.descent()) / 2f, chipPaint)
                 }
             }
             else -> {
-                drawBtn(c, PLUS, EdgeView.C_FILL, 0, false, a, a)
-                chipPaint.color = Color.WHITE
+                drawBtn(c, PLUS, h.cFill, 0, false, a, a)
+                chipPaint.color = h.ink
                 chipPaint.alpha = ai
-                c.drawText("+1", cx[PLUS], cy[PLUS] - (chipPaint.ascent() + chipPaint.descent()) / 2f, chipPaint)
-                drawBtn(c, PAUSE, EdgeView.C_FILL, if (mode == M_PAUSED) R.drawable.ic_play else R.drawable.ic_pause, false, a, a)
-                drawBtn(c, CANCEL, EdgeView.C_FILL, R.drawable.ic_x, false, a, a)
+                h.text(c, "+1", cx[PLUS], cy[PLUS] - (chipPaint.ascent() + chipPaint.descent()) / 2f, chipPaint)
+                drawBtn(c, PAUSE, h.cFill, if (mode == M_PAUSED) R.drawable.ic_play else R.drawable.ic_pause, false, a, a)
+                drawBtn(c, CANCEL, h.cFill, R.drawable.ic_x, false, a, a)
             }
         }
     }
@@ -274,8 +275,8 @@ internal class WinTimer(h: EdgeView) : Win(h, "timer", 10) {
         }
         val ai = (255f * a + 0.5f).toInt()
         val ap = h.arcPaint
-        ap.strokeWidth = dp(6f)
-        ap.color = EdgeView.C_TRACK
+        ap.strokeWidth = h.sw(dp(6f))
+        ap.color = h.cTrack
         ap.alpha = ai
         c.drawArc(dial, 180f + SL_A0, SL_A1 - SL_A0, false, ap)
         val f = minutes / 60f
@@ -283,19 +284,20 @@ internal class WinTimer(h: EdgeView) : Win(h, "timer", 10) {
         ap.alpha = ai
         c.drawArc(dial, 180f + SL_A0, (SL_A1 - SL_A0) * f, false, ap)
         val ang = Math.toRadians((SL_A0 + (SL_A1 - SL_A0) * f).toDouble())
-        h.fillP.color = Color.WHITE
+        h.fillP.color = h.ink
         h.fillP.alpha = ai
         c.drawCircle(-dialR * cos(ang).toFloat(), -dialR * sin(ang).toFloat(), dp(if (dragging) 9f else 7f), h.fillP)
 
+        valuePaint.color = h.ink
         valuePaint.alpha = ai
-        c.drawText(valueStr, valueX, valueY, valuePaint)
+        h.text(c, valueStr, valueX, valueY, valuePaint)
 
         for (i in 0 until 4) {
             val sel = presets[i] == minutes
-            drawBtn(c, i, if (sel) h.accent else EdgeView.C_FILL, 0, false, a, a)
-            chipPaint.color = if (sel) Color.BLACK else Color.WHITE
+            drawBtn(c, i, if (sel) h.accent else h.cFill, 0, false, a, a)
+            chipPaint.color = if (sel) Color.BLACK else h.ink
             chipPaint.alpha = ai
-            c.drawText(presetTxt[i], cx[i], cy[i] - (chipPaint.ascent() + chipPaint.descent()) / 2f, chipPaint)
+            h.text(c, presetTxt[i], cx[i], cy[i] - (chipPaint.ascent() + chipPaint.descent()) / 2f, chipPaint)
         }
         drawBtn(c, START, h.accent, R.drawable.ic_play, true, a, a)
     }

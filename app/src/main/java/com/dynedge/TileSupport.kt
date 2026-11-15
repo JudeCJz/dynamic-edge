@@ -57,6 +57,23 @@ internal object TileSupport {
         }
     }
 
+    /**
+     * Can this tile work on this phone at all? False = missing hardware, not in this phone's quick settings, failed in
+     * the panel last time, or only adb can grant what it needs. A tile that only lacks a grantable permission
+     * (DND access, write settings, the Dynamic Edge service) is still usable. Unknown ids are usable.
+     * Used by the Quick editor's tray, and meant for the overlay to skip such tiles. Cheap: no I/O beyond a few
+     * Settings reads; hardware lookups are cached.
+     */
+    fun usable(ctx: Context, id: String): Boolean {
+        if (ShortcutStore.isId(id)) return true
+        return when (val s = support(ctx, id)) {
+            is Support.Ok -> true
+            is Support.MissingHardware -> false
+            is Support.OpensSettings -> false
+            is Support.NeedsPermission -> s.which != Need.SECURE
+        }
+    }
+
     /** The screen that fixes [need], or null when it cannot be granted on the phone (adb only). */
     fun intent(ctx: Context, need: Need): Intent? = when (need) {
         Need.DND -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
@@ -87,7 +104,10 @@ internal object TileSupport {
         if (!id.startsWith(QsCatalog.SYS)) return Support.Ok
         val spec = id.substring(QsCatalog.SYS.length)
         when (spec) {
-            "nfc" -> if (NfcAdapter.getDefaultAdapter(app) == null) return Support.MissingHardware("NFC")
+            "nfc" -> if (!feature(app, PackageManager.FEATURE_NFC) || NfcAdapter.getDefaultAdapter(app) == null)
+                return Support.MissingHardware("NFC")
+            "cell" -> if (!feature(app, PackageManager.FEATURE_TELEPHONY)) return Support.MissingHardware("mobile data")
+            "hotspot" -> if (!feature(app, PackageManager.FEATURE_WIFI)) return Support.MissingHardware("Wi-Fi")
             "flashlight" -> if (!hasFlash(app)) return Support.MissingHardware("flash")
             "bt" -> if (!app.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)) return Support.MissingHardware("Bluetooth")
         }
@@ -105,9 +125,9 @@ internal object TileSupport {
 
     /** A tile that is pressed in the QS panel by QsDriver. */
     private fun qs(app: Context, id: String, spec: String): Support {
-        if (!Perms.overlayEnabled(app)) return Support.NeedsPermission(Need.ACCESSIBILITY)
         if (failed(app, id) || failed(app, QsCatalog.SYS + spec)) return Support.OpensSettings("not found in quick settings last time")
         if (!inPanel(app, spec)) return Support.OpensSettings("not in this phone's quick settings")
+        if (!Perms.overlayEnabled(app)) return Support.NeedsPermission(Need.ACCESSIBILITY)
         return Support.Ok
     }
 
@@ -124,12 +144,16 @@ internal object TileSupport {
     private fun component(spec: String): ComponentName? =
         ComponentName.unflattenFromString(spec.removePrefix("custom(").removeSuffix(")"))
 
-    private fun hasFlash(app: Context): Boolean = try {
+    private var flash: Boolean? = null
+
+    private fun hasFlash(app: Context): Boolean = flash ?: (try {
         val cm = app.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
         cm != null && cm.cameraIdList.any { cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
     } catch (e: Exception) {
         app.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH)
-    }
+    }).also { flash = it }
+
+    private fun feature(app: Context, f: String): Boolean = app.packageManager.hasSystemFeature(f)
 
     private fun dnd(app: Context): Boolean =
         (app.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.isNotificationPolicyAccessGranted ?: false

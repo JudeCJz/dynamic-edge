@@ -161,6 +161,7 @@ class Tiles(private val ctx: Context, private val onChange: () -> Unit) {
     private fun realOn(id: String): Boolean = realState(id) ?: false
 
     fun isAvailable(id: String): Boolean {
+        if (ShortcutStore.isId(id)) return true
         val t = toggleId(id)
         if (t != null) return qt.isAvailable(t)
         if (QsCatalog.isQs(id)) return true
@@ -168,6 +169,7 @@ class Tiles(private val ctx: Context, private val onChange: () -> Unit) {
     }
 
     fun iconRes(id: String): Int {
+        if (ShortcutStore.isId(id)) return ShortcutStore.iconRes(app, id)
         val t = toggleId(id)
         if (t != null) {
             if (id in pendTarget) return pendIcon(t, pendTarget[id] == true)
@@ -242,6 +244,7 @@ class Tiles(private val ctx: Context, private val onChange: () -> Unit) {
 
     /** True => the caller collapses the panel first (activity launch or global action). */
     fun perform(id: String): Boolean {
+        if (ShortcutStore.isId(id)) return ShortcutStore.launch(app, id)
         if (id in pendTarget) return false // the last tap on this tile is still settling
         val t = toggleId(id)
         if (t == ToggleId.WIFI) {
@@ -346,6 +349,7 @@ class Tiles(private val ctx: Context, private val onChange: () -> Unit) {
     }
 
     fun openSettings(id: String): Boolean {
+        if (ShortcutStore.isId(id)) return ShortcutStore.edit(app, id)
         val t = toggleId(id)
         if (t != null) return qt.openSettings(t)
         if (QsCatalog.isQs(id)) return DirectToggles.openSettings(app, id)

@@ -33,8 +33,10 @@ class HsvPickerView(ctx: Context) : View(ctx) {
     var onColor: ((Int) -> Unit)? = null
 
     private val d = resources.displayMetrics.density
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val px = PixelMode.on(ctx)
+    private val grid = if (px) PixelMode.gridPx(ctx) else 0f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !px }
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; isAntiAlias = !px }
     private val cross = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     private var hue = 0f
@@ -92,7 +94,7 @@ class HsvPickerView(ctx: Context) : View(ctx) {
             valShader = LinearGradient(0f, 0f, 0f, side, Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP)
         }
         p.reset()
-        p.isAntiAlias = true
+        p.isAntiAlias = !px
         p.shader = satShader
         c.drawRect(0f, 0f, side, side, p)
         p.shader = valShader
@@ -117,21 +119,21 @@ class HsvPickerView(ctx: Context) : View(ctx) {
         // crosshair in the square
         val cx = sat * side
         val cy = (1f - bri) * side
-        ring.strokeWidth = 3 * d
+        ring.strokeWidth = if (px) grid else 3 * d
         ring.color = 0x66000000
-        c.drawCircle(cx, cy, 9 * d, ring)
+        c.drawDisc(px, cx, cy, if (px) 4 * grid else 9 * d, ring)
         ring.color = Color.WHITE
-        c.drawCircle(cx, cy, 7 * d, ring)
+        c.drawDisc(px, cx, cy, if (px) 3 * grid else 7 * d, ring)
 
         // marker on the hue strip
         val hx = hue / 360f * side
-        ring.strokeWidth = 3 * d
+        ring.strokeWidth = if (px) grid else 3 * d
         ring.color = 0x66000000
-        c.drawCircle(hx, barTop + barH / 2f, 11 * d, ring)
+        c.drawDisc(px, hx, barTop + barH / 2f, if (px) 5 * grid else 11 * d, ring)
         ring.color = Color.WHITE
-        c.drawCircle(hx, barTop + barH / 2f, 9 * d, ring)
+        c.drawDisc(px, hx, barTop + barH / 2f, if (px) 4 * grid else 9 * d, ring)
         p.color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
-        c.drawCircle(hx, barTop + barH / 2f, 6 * d, p)
+        c.drawDisc(px, hx, barTop + barH / 2f, if (px) 2 * grid else 6 * d, p)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -200,6 +202,7 @@ object ColorPicker {
         val picker = HsvPickerView(ctx).apply { setColorSilently(initial) }
 
         val hex = TextView(ctx).apply {
+            PixelMode.typeface(ctx)?.let { typeface = it }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTextColor(Skin.TEXT)
             text = hex(initial)
@@ -303,6 +306,7 @@ object ColorPicker {
 
         dialog.setOnDismissListener { onDone?.invoke() }
         dialog.setOnShowListener {
+            dialog.window?.decorView?.let { PixelMode.applyTo(it) }
             dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Skin.BG))
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(accent)
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(Skin.TEXT_2)

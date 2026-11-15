@@ -98,12 +98,17 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             Prefs.KEY_SPEED, Prefs.KEY_BOUNCE, Prefs.KEY_HAPTICS, Prefs.KEY_IDLE_STYLE,
             Prefs.KEY_VISUALIZER, Prefs.KEY_LIVE, Prefs.KEY_BEAT, Prefs.KEY_FILL, Prefs.KEY_VIZ_STYLE,
             Prefs.KEY_BEAT_AMOUNT, Prefs.KEY_OPACITY, Prefs.KEY_BASE, Prefs.KEY_SWIPE_SENS,
-            Prefs.KEY_GRAD_ON, Prefs.KEY_GRAD1, Prefs.KEY_GRAD2, Prefs.KEY_TOUCH_SHOW -> edge?.applyLooks()
-            QuickConfig.KEY -> edge?.reloadQuick()
+            Prefs.KEY_GRAD_ON, Prefs.KEY_GRAD1, Prefs.KEY_GRAD2, Prefs.KEY_TOUCH_SHOW,
+            // pixel mode changes typefaces and stroke grids baked into the windows: rebuild the overlay window
+            Prefs.KEY_PIXEL_MODE -> if (edge != null) { detachWindow(); attach() }
+            Prefs.KEY_PIXEL_SIZE, Prefs.KEY_GLASS_BLUR, Prefs.KEY_GLASS_FROST, Prefs.KEY_GLASS_TINT -> edge?.applyLooks()
+            Prefs.KEY_GLASS -> if (edge != null) { detachWindow(); attach() }
+            Prefs.KEY_FLOAT, Prefs.KEY_FLOAT_GAP, Prefs.KEY_POS, Prefs.KEY_SIDE_LEFT -> applyPlacement()
+            QuickConfig.KEY, ShortcutStore.KEY -> edge?.reloadQuick()
             WindowsConfig.KEY -> edge?.reloadWindows()
             Prefs.KEY_FLARE -> applyFlare()
             Prefs.KEY_PAUSE_ON, Prefs.KEY_PAUSE_APPS -> pauseSet = PauseGate.watchSet(this)
-            Prefs.KEY_APPS, IconTheme.KEY -> edge?.reloadWinPrefs()
+            Prefs.KEY_APPS, IconTheme.KEY, Prefs.KEY_ICON_CORNER, Prefs.KEY_ICON_PIXEL -> edge?.reloadWinPrefs()
             else -> if (key != null && key.startsWith(Prefs.WIN_PREFIX)) edge?.reloadWinPrefs()
         }
     }
@@ -141,7 +146,28 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         val manager = wm ?: return
         val params = lp ?: return
         view.applySizes(Prefs.idleDp(this), Prefs.openDp(this))
+        view.applyPlacement() // the position clamp depends on the open size
         resizeWindow(view, manager, params)
+    }
+
+    /** Float / gap / position / side changed: the view re-reads them, then the window moves (gravity, x, y). */
+    private fun applyPlacement() {
+        val view = edge ?: return
+        val manager = wm ?: return
+        val params = lp ?: return
+        view.applyPlacement()
+        view.setTipRadius(readTipRadius())
+        resizeWindow(view, manager, params)
+    }
+
+    /** Copies the view's placement into the layout params; true if anything changed. */
+    private fun syncPlacement(view: EdgeView, params: WindowManager.LayoutParams): Boolean {
+        val g = Gravity.BOTTOM or (if (Prefs.sideLeft(this)) Gravity.LEFT else Gravity.RIGHT)
+        if (params.gravity == g && params.x == view.placeX && params.y == view.placeY) return false
+        params.gravity = g
+        params.x = view.placeX
+        params.y = view.placeY
+        return true
     }
 
     private fun applyFlare() {
@@ -149,6 +175,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         val manager = wm ?: return
         val params = lp ?: return
         view.applyFlare()
+        view.applyPlacement()
         resizeWindow(view, manager, params)
     }
 
@@ -158,7 +185,8 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         // never smaller than the idle grab square, so the whole grab area is reachable
         val w = kotlin.math.max(view.maxOpenWidthPx + pad, view.grabPx)
         val h = kotlin.math.max(view.maxOpenHeightPx + pad, view.grabPx)
-        if (params.width == w && params.height == h) return
+        val moved = syncPlacement(view, params)
+        if (params.width == w && params.height == h && !moved) return
         params.width = w
         params.height = h
         pushLayout(view, manager, params)
@@ -290,9 +318,9 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
                     WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT
             )
-            p.gravity = Gravity.BOTTOM or Gravity.RIGHT
-            p.x = 0
-            p.y = 0
+            p.gravity = Gravity.BOTTOM or (if (Prefs.sideLeft(this)) Gravity.LEFT else Gravity.RIGHT)
+            p.x = v.placeX
+            p.y = v.placeY
             p.fitInsetsTypes = 0
             p.fitInsetsSides = 0
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
@@ -403,6 +431,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         val params = lp ?: return
         view.setTipRadius(readTipRadius())
         view.onDensityChanged() // density / font scale: sizes, paints and windows are rebuilt
+        view.applyPlacement()   // the screen width may have changed (rotation)
         resizeWindow(view, manager, params)
     }
 
@@ -417,6 +446,13 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
     }
 
     // ------------------------------------------------------------ EdgeView.Host
+
+    override fun onFast(on: Boolean) {
+        val v = edge ?: return
+        val m = wm ?: return
+        val p = lp ?: return
+        if (FrameRate.set(this, p, on)) pushLayout(v, m, p)
+    }
 
     override fun onSettled(expanded: Boolean) {
         // The window never resizes while opening or closing.
@@ -451,6 +487,12 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
     // ------------------------------------------------------------ clipboard popup (lazy second overlay window)
 
     private var clipPopup: ClipPopup? = null
+
+    override fun performAction(action: Int): Boolean = try {
+        performGlobalAction(action)
+    } catch (e: Exception) {
+        false
+    }
 
     override fun openClipPopup() {
         if (!attached) return
@@ -487,7 +529,8 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0f
         val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return 0f
         val display = dm.getDisplay(Display.DEFAULT_DISPLAY) ?: return 0f
-        return display.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius?.toFloat() ?: 0f
+        val pos = if (Prefs.sideLeft(this)) RoundedCorner.POSITION_BOTTOM_LEFT else RoundedCorner.POSITION_BOTTOM_RIGHT
+        return display.getRoundedCorner(pos)?.radius?.toFloat() ?: 0f
     }
 
     /** Removes the overlay window and drops the view; safe to call repeatedly. */

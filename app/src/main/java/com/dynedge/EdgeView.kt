@@ -4,6 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.app.PendingIntent
 import android.content.Context
 import android.content.SharedPreferences
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.content.Intent
 import android.graphics.Canvas
@@ -12,6 +16,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PathMeasure
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RenderNode
@@ -56,11 +61,15 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     interface Host {
         fun onSettled(expanded: Boolean)
+        /** The overlay starts (true) or stops (false) animating / being open: vote for 90 Hz meanwhile. */
+        fun onFast(on: Boolean) {}
         fun onRegionChanged(region: Region)
         /** Makes the overlay window focusable (true) or not focusable (false); used for a short clipboard capture. */
         fun setWindowFocusable(on: Boolean)
         /** Shows the small floating clipboard popup (ClipPopup); the edge never launches ClipboardActivity. */
         fun openClipPopup()
+        /** Runs an AccessibilityService global action (long-press actions). */
+        fun performAction(action: Int): Boolean = false
     }
 
     var host: Host? = null
@@ -288,6 +297,70 @@ class EdgeView(ctx: Context) : View(ctx) {
     private var openDamp = 0.8f
     private var idleId = "glyph"
     private var baseColor = Color.BLACK
+
+    // Ink: everything drawn on the body reads these (white on a dark body, black on a light one). Set by applyInk().
+    /** Primary content colour on the body. */
+    internal var ink = Color.WHITE
+        private set
+    /** Content colour on an [ink]-coloured surface (the flipped ink). */
+    internal var inkOn = Color.BLACK
+        private set
+    /** Placeholder disc fill (unfilled controls), a little toward the ink. */
+    internal var cFill = DEF_FILL
+        private set
+    /** Slider tracks. */
+    internal var cTrack = DEF_TRACK
+        private set
+    /** Dim secondary text. */
+    internal var cGrey = DEF_GREY
+        private set
+    internal var lightBody = false
+        private set
+
+    // Placement: floating island, distance along the bottom edge, left / right side (see applyPlacement)
+    private var floatOn = false
+    /** The edge is on the left side: onDraw mirrors the canvas, touch coordinates are mirrored back. */
+    internal var mirror = false
+        private set
+    /** Window offset from the side edge / the bottom edge in px (the service applies it as LayoutParams x / y). */
+    internal var placeX = 0
+        private set
+    internal var placeY = 0
+        private set
+    private var geomVer = 0
+    private var lastGeomVer = -1
+    // resolved shape parameters for the current flare (see resolveGeom)
+    private var gFlB = 0f
+    private var gFlS = 0f
+    private var gRhoB = 0f
+    private var gRhoS = 0f
+    private var gTip = 0f
+    private val mirrorMat = Matrix()
+    private val pathMeasure = PathMeasure()
+
+    // Long-press hide: the service's hide (IME, keyguard, pause) and the user's timed hide are separate
+    private var svcHidden = false
+    private var userHide = false
+    private val unhideRunnable = Runnable {
+        userHide = false
+        applyHidden()
+        // spring back: pop in from a smaller bean, the press spring settles it
+        press.value = 0.55f
+        press.velocity = 0f
+        press.target = 1f
+        requestFrames()
+    }
+
+    /**
+     * Pixel mode hook (the lead wires it later). When non-null, onDraw hands the canvas and the whole drawing to
+     * it, so it can render the drawing into a low-resolution buffer and scale it up. No-op while null.
+     */
+    internal var pixelHook: ((Canvas, (Canvas) -> Unit) -> Unit)? = null
+    private val drawAllFn: (Canvas) -> Unit = { drawAll(it) }
+    // pixel mode: the whole overlay is drawn into a low-res bitmap and upscaled without filtering
+    private val pixelLayer = PixelLayer()
+    private var pixelCell = 3f
+    private val pixelFn: (Canvas, (Canvas) -> Unit) -> Unit = { c, block -> pixelLayer.draw(c, width, height, pixelCell, block) }
     private var grad1 = 0
     private var grad2 = 0
     private var swipeCommitDeg = 24f
@@ -321,8 +394,6 @@ class EdgeView(ctx: Context) : View(ctx) {
     private var driftX = 0f
     private var driftY = 0f
     private var beatAmount = 0.5f
-    private var bassAvg = 0f    // slow running bass average for onset (kick) detection
-    private var kickCd = 0f     // seconds until the next kick is allowed
     private var kickEnv = 0f    // beat swell envelope 0..1, decays smoothly
     private var opacityPct = 100
     private var lastRimW = -1f
@@ -347,19 +418,27 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     private fun buildShapeShader(): Shader {
+        if (pixelHook != null) {
+            return PixelBands.radial(GR, EdgePaint.stops(baseColor, grad1, grad2, gradientPct, accent), EdgePaint.POSITIONS)
+        }
         return EdgePaint.shapeShader(baseColor, grad1, grad2, gradientPct, accent, GR)
     }
 
     private fun buildGlowShader(): Shader {
+        if (pixelHook != null) {
+            val rgb = accent and 0xFFFFFF
+            return PixelBands.radial(
+                GR, intArrayOf((0x88 shl 24) or rgb, (0x30 shl 24) or rgb, rgb), floatArrayOf(0f, 0.38f, 0.85f)
+            )
+        }
         return EdgePaint.glowShader(accent, 1f, GR)
     }
     private fun buildCoreShader(): Shader {
         val rgb = mixColor(accent or (0xFF shl 24), Color.WHITE, 0.12f) and 0xFFFFFF
-        return android.graphics.RadialGradient(
-            0f, 0f, GR,
-            intArrayOf((0xC0 shl 24) or rgb, (0x58 shl 24) or rgb, (0x16 shl 24) or rgb, rgb),
-            floatArrayOf(0f, 0.4f, 0.75f, 1f), Shader.TileMode.CLAMP
-        )
+        val cols = intArrayOf((0xC0 shl 24) or rgb, (0x58 shl 24) or rgb, (0x16 shl 24) or rgb, rgb)
+        val pos = floatArrayOf(0f, 0.4f, 0.75f, 1f)
+        if (pixelHook != null) return PixelBands.radial(GR, cols, pos)
+        return android.graphics.RadialGradient(0f, 0f, GR, cols, pos, Shader.TileMode.CLAMP)
     }
     private val unitPath = Path()
     private var gradScale = 1f
@@ -368,6 +447,44 @@ class EdgeView(ctx: Context) : View(ctx) {
         style = Paint.Style.FILL
         shader = shapeShader
     }
+    // ---- glass mode (see Glass.kt): real blur behind (where the phone allows it) + a plain clear smoke body
+    private var glassOn = false
+    private var glassBlurPx = 0
+    private val glassBlur = GlassBlur(this)
+    private val glassFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private fun applyGlassLooks(ctx: Context) {
+        glassOn = Prefs.glass(ctx)
+        if (!glassOn) {
+            glassBlur.release()
+            return
+        }
+        glassBlurPx = (dp(Prefs.glassBlur(ctx) * 0.5f)).toInt()
+        if (viewAttached) glassBlur.ensure(ctx)
+        applyGlassFill()
+    }
+
+    /** Tint alpha: without the real blur the body gets denser so the content stays readable. */
+    private fun applyGlassFill() {
+        // plain clear glass: a neutral smoke so content stays readable, never coloured by the body or accent
+        val a = if (glassBlur.active && glassBlurPx > 0) 0.18f else 0.42f
+        glassFill.color = (255f * a + 0.5f).toInt() shl 24
+    }
+
+    private fun updateGlassBlur() {
+        if (!glassOn || hidden || opacityPct < 100 || glassBlurPx <= 0 || !glassBlur.active) return
+        val dw = drawW; val dh = drawH
+        val r = min(dw, dh)
+        val tip = min(gTip, 0.4f * r)
+        val w = width; val h = height
+        val top = (h - dh).toInt()
+        if (mirror) {
+            glassBlur.update(0, top, dw.toInt(), h, 0f, r, 0f, tip, glassBlurPx)
+        } else {
+            glassBlur.update((w - dw).toInt(), top, w, h, r, 0f, tip, 0f, glassBlurPx)
+        }
+    }
+
+    /** Frost grain, rim darkening, lens band, specular rim and chromatic fringe over the shape fill. */
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         shader = glowShader
@@ -638,6 +755,25 @@ class EdgeView(ctx: Context) : View(ctx) {
         invalidate()
     }
 
+    /**
+     * Re-reads the placement prefs (float, gap, position along the bottom edge, side). The service then moves the
+     * window ([placeX] / [placeY], gravity) and re-reads the tip radius of the matching display corner.
+     */
+    fun applyPlacement() {
+        val c = context
+        floatOn = Prefs.floatOn(c)
+        mirror = Prefs.sideLeft(c)
+        Geo.mirror = mirror
+        placeX = placeXFor(c)
+        placeY = placeYFor(c)
+        geomVer++
+        lastDw = -1f
+        exclL = -1 // forces updateExclusion to recompute (or clear) the gesture exclusion for the new side
+        layoutAll()
+        publishRegion()
+        invalidate()
+    }
+
     /** Re-reads the looks and feel prefs (coalesced to one pass per frame). */
     fun applyLooks() {
         if (looksPosted) return
@@ -680,6 +816,80 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     fun setHidden(h: Boolean) {
+        svcHidden = h
+        applyHidden()
+    }
+
+    /** Long-press on the closed bean: it fades out for [Prefs.hideSeconds], then springs back. */
+    private fun hideForAwhile() {
+        removeCallbacks(unhideRunnable)
+        userHide = true
+        applyHidden()
+        postDelayed(unhideRunnable, Prefs.hideSeconds(context) * 1000L)
+    }
+
+    /** Runs the user's long-press action ([Prefs.longAction]) for the closed bean. */
+    private fun runLongAction(act: String) {
+        val c = context
+        when (act) {
+            Prefs.LA_HIDE -> hideForAwhile()
+            Prefs.LA_SETTINGS -> try {
+                c.startActivity(Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+            }
+            Prefs.LA_NOTIFICATIONS -> host?.performAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+            Prefs.LA_QUICK_SETTINGS -> host?.performAction(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
+            Prefs.LA_RECENTS -> host?.performAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
+            Prefs.LA_LOCK -> host?.performAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+            Prefs.LA_SCREENSHOT -> host?.performAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+            Prefs.LA_POWER -> host?.performAction(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
+            Prefs.LA_TORCH -> toggleTorchOnce()
+            Prefs.LA_ASSISTANT -> AssistControl.launch(c)
+        }
+    }
+
+    /** Flips the torch the way the QUICK torch tile does (CameraManager.setTorchMode on the flash camera). */
+    private fun toggleTorchOnce() {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
+        var id: String? = null
+        try {
+            for (cid in cm.cameraIdList) {
+                val ch = cm.getCameraCharacteristics(cid)
+                if (ch.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) != true) continue
+                if (ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK) {
+                    id = cid
+                    break
+                }
+                if (id == null) id = cid
+            }
+        } catch (e: Exception) {
+            return
+        }
+        val torch = id ?: return
+        // the callback reports the current state once on registration: flip it, then unregister
+        val cb = object : CameraManager.TorchCallback() {
+            private var done = false
+            override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                if (done || cameraId != torch) return
+                done = true
+                try {
+                    cm.setTorchMode(torch, !enabled)
+                } catch (e: Exception) {
+                }
+                try {
+                    cm.unregisterTorchCallback(this)
+                } catch (e: Exception) {
+                }
+            }
+        }
+        try {
+            cm.registerTorchCallback(cb, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun applyHidden() {
+        val h = svcHidden || userHide
         if (hidden == h) return
         hidden = h
         // never let an older fade finish after this one: cancel it, then fade (or snap when not attached yet)
@@ -696,6 +906,7 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     /** Stops listeners and callbacks; call before removing the view for good. */
     fun release() {
+        glassBlur.release()
         if (framePosted) {
             Choreographer.getInstance().removeFrameCallback(frameCb)
             framePosted = false
@@ -704,6 +915,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         cancelItemLongPress()
         removeCallbacks(liveTickRunnable)
         removeCallbacks(captureTimeout)
+        removeCallbacks(unhideRunnable)
         captureWanted = false
         for (r in transientRunnables.values) removeCallbacks(r)
         transientRunnables.clear()
@@ -744,9 +956,9 @@ class EdgeView(ctx: Context) : View(ctx) {
         winMap.clear()
         order = ArrayList()
         nWin = 0
-        rimPaint.strokeWidth = dp(1f)
-        ringPaint.strokeWidth = dp(1.5f)
-        liveTitlePaint.textSize = sp(9f)
+        rimPaint.strokeWidth = sw(dp(1f))
+        ringPaint.strokeWidth = sw(dp(1.5f))
+        liveTitlePaint.textSize = sp(11f)
         applySizes(Prefs.idleDp(context), Prefs.openDp(context))
         applyFlare()
         reloadWindows()
@@ -761,12 +973,14 @@ class EdgeView(ctx: Context) : View(ctx) {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         viewAttached = true
+        if (glassOn) { glassBlur.ensure(context); applyGlassFill() }
         applySwipeSens()
         try {
             Prefs.prefs(context).registerOnSharedPreferenceChangeListener(sensListener)
         } catch (e: Exception) {
         }
         LiveBus.onChange = { onLiveChanged() }
+        LiveTest.view = this
         setClipListening(true)
         syncIdleServices()
         onLiveChanged()
@@ -775,6 +989,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     /** Every source and loop stops with the window; onAttachedToWindow restarts only what is wanted. */
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        pixelLayer.release()
         viewAttached = false
         try {
             Prefs.prefs(context).unregisterOnSharedPreferenceChangeListener(sensListener)
@@ -788,6 +1003,15 @@ class EdgeView(ctx: Context) : View(ctx) {
         syncIdleServices()    // media watch + power receiver are released while detached
         setClipListening(false)
         LiveBus.onChange = null
+        if (LiveTest.view === this) LiveTest.view = null
+    }
+
+    /** Live test hooks. */
+    internal fun testRefreshIdle() = syncIdleServices()
+    internal fun testHide() = hideForAwhile()
+    internal fun testUnhide() {
+        removeCallbacks(unhideRunnable)
+        unhideRunnable.run()
     }
 
     private fun stopVizLoop() {
@@ -894,6 +1118,19 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     private fun applyLooksNow() {
         val c = context
+        if (PixelMode.on(c)) {
+            pixelCell = PixelMode.cellPx(c)
+            snapCell = PixelLayer.cellInt(pixelCell).toFloat()
+            pixelLayer.face = PixelMode.typeface(c)
+            liveTitlePaint.typeface = PixelMode.typeface(c)
+            pixelHook = pixelFn
+        } else {
+            snapCell = 0f
+            pixelHook = null
+            pixelLayer.release()
+            liveTitlePaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        looks.cell = snapCell
         hapticsOn = Prefs.haptics(c)
         vizOn = Prefs.visualizer(c)
         liveOn = Prefs.live(c)
@@ -912,14 +1149,16 @@ class EdgeView(ctx: Context) : View(ctx) {
         fillId = Prefs.fill(c)
         vizId = Prefs.vizStyle(c)
         baseColor = Prefs.base(c)
+        applyInk()
         grad1 = Prefs.grad1(c)
         grad2 = Prefs.grad2(c)
         gradOn = Prefs.gradOn(c)
-        rimPaint.strokeWidth = dp(1f)
+        rimPaint.strokeWidth = sw(dp(1f))
+        ringPaint.strokeWidth = sw(dp(1.5f))
         applyOpacity(Prefs.opacityPct(c))
         applySwipeSens()
         touchShow = Prefs.touchShow(c)
-        touchPaint.strokeWidth = dp(1.5f)
+        touchPaint.strokeWidth = sw(dp(1.5f))
         touchPaint.pathEffect = DashPathEffect(floatArrayOf(dp(6f), dp(5f)), 0f)
         looks.accent = accent
         shapeShader = buildShapeShader()
@@ -927,9 +1166,11 @@ class EdgeView(ctx: Context) : View(ctx) {
         coreShader = buildCoreShader()
         // The gradient is painted under the shape; the fill pattern is an optional overlay on top of it.
         // Gradient OFF means off: the shape is the pure base colour plus its pattern.
-        gradientActive = gradOn && gradientPct > 0
+        // a custom body colour is drawn flat: the warm accent core of the default gradient would stain it
+        gradientActive = gradOn && gradientPct > 0 && (baseColor and 0xFFFFFF) == 0
         shapePaint.shader = if (gradientActive) shapeShader else null
         shapePaint.color = baseColor
+        applyGlassLooks(c)
         glowPaint.shader = glowShader
         corePaint.shader = coreShader
         ringPaint.color = accent
@@ -960,7 +1201,8 @@ class EdgeView(ctx: Context) : View(ctx) {
     // ================================================================ idle services
 
     private fun invalidateBean() {
-        invalidate(width - beanPx, height - beanPx, width, height)
+        if (mirror) invalidate(0, height - beanPx, beanPx, height)
+        else invalidate(width - beanPx, height - beanPx, width, height)
     }
 
     private fun syncIdleServices() {
@@ -969,8 +1211,8 @@ class EdgeView(ctx: Context) : View(ctx) {
             var w = mediaWatch
             if (w == null) {
                 w = IdleMediaWatch(context) { pl ->
-                    musicPlaying = pl
-                    idlePlaying = pl && vizOn
+                    musicPlaying = pl || LiveTest.demoMusic
+                    idlePlaying = musicPlaying && vizOn
                     updateViz()
                     invalidateBean()
                 }
@@ -978,12 +1220,12 @@ class EdgeView(ctx: Context) : View(ctx) {
                 mediaWatch = w
             }
             w.start()
-            musicPlaying = w.playing
-            idlePlaying = w.playing && vizOn
+            musicPlaying = w.playing || LiveTest.demoMusic
+            idlePlaying = musicPlaying && vizOn
         } else {
             mediaWatch?.stop()
-            musicPlaying = false
-            idlePlaying = false
+            musicPlaying = LiveTest.demoMusic && viewAttached && screenOn
+            idlePlaying = musicPlaying && vizOn
         }
         updateViz()
         invalidateBean()
@@ -1019,7 +1261,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         }
         if (viewAttached && (vizRunning || beatActive()) && !vizPosted) {
             vizPosted = true
-            Choreographer.getInstance().postFrameCallbackDelayed(vizCb, if (vizRunning) 25L else 0L)
+            Choreographer.getInstance().postFrameCallback(vizCb)
         }
     }
 
@@ -1033,8 +1275,9 @@ class EdgeView(ctx: Context) : View(ctx) {
         lastVizNanos = 0L
     }
 
+    /** Fade-out only, after playback stops (live levels are already smoothed once in IdleVisualizer). */
     private fun sm(v: Float, t: Float, dt: Float): Float {
-        val tau = if (t > v) 0.06f else 0.28f
+        val tau = if (t > v) 0.012f else 0.1f
         return v + (t - v) * (dt / (tau + dt))
     }
 
@@ -1047,57 +1290,51 @@ class EdgeView(ctx: Context) : View(ctx) {
             if (expandedTarget || dragMode != 0) invalidate()
             return
         }
-        val dtN = t - lastVizNanos
-        if (lastVizNanos == 0L || dtN >= 31_000_000L) {
-            val dt = if (lastVizNanos == 0L) 0.033f else (dtN * 1e-9f).coerceAtMost(0.1f)
-            lastVizNanos = t
-            var lb = 0f
-            var l1 = 0f
-            var l2 = 0f
-            var lh = 0f
-            if (live) {
-                visualizer.tick(dt, t / 1_000_000L)
-                val lv = visualizer.levels
-                lb = lv[0].coerceIn(0f, 1f)
-                l1 = lv[1].coerceIn(0f, 1f)
-                l2 = lv[2].coerceIn(0f, 1f)
-                lh = lv[3].coerceIn(0f, 1f)
-            }
-            if (beatOn) {
-                val energy = (0.5f * lb + 0.3f * l1 + 0.2f * l2).coerceIn(0f, 1f)
-                beat = sm(beat, energy, dt)
-                bassS = sm(bassS, lb, dt)
-                midS = sm(midS, (l1 + l2) * 0.5f, dt)
-                highS = sm(highS, lh, dt)
-                driftPhase += dt
-                driftX = sin(driftPhase * 1.3f) * midS * dp(6f)
-                driftY = cos(driftPhase * 1.0f) * midS * dp(6f)
-            } else {
-                beat = 0f; bassS = 0f; midS = 0f; highS = 0f; driftX = 0f; driftY = 0f
-            }
-            // Visible bounce: a slow breathing base (smoothed energy) plus a spring KICK on every bass onset
-            // (bass rising clearly above its own running average), so the bean jumps on the beat and springs back.
-            val drive = (beat * 1.8f).coerceAtMost(1f)
-            // Fluid: each onset raises a swell envelope that decays smoothly (tau ~0.22 s); a soft, well-damped
-            // spring follows the target, so the bean rises and settles like liquid instead of snapping.
-            kickEnv *= exp(-dt / 0.22f)
-            if (beatOn) {
-                bassAvg += (lb - bassAvg) * min(1f, dt / 0.45f)
-                kickCd -= dt
-                val flux = lb - bassAvg
-                if (flux > 0.06f && lb > 0.12f && kickCd <= 0f) {
-                    kickEnv = max(kickEnv, (flux * 5f).coerceIn(0.4f, 1f))
-                    kickCd = 0.14f
-                }
-            }
-            val swell = if (expandedTarget) 0.015f * drive + 0.02f * kickEnv else 0.05f * drive + 0.22f * kickEnv
-            pulseS.target = 1f + beatAmount * swell
-            pulseS.step(dt)
-            pulseS.value = pulseS.value.coerceIn(0.97f, 1.3f)
-            if (expandedTarget || dragMode != 0) invalidate() else invalidateBean()
+        // every vsync: one tick feeds the bean, the open rim and the beat from the same levels at the same time
+        val dt = if (lastVizNanos == 0L) 0.016f else ((t - lastVizNanos) * 1e-9f).coerceIn(0.002f, 0.05f)
+        lastVizNanos = t
+        var lb = 0f
+        var l1 = 0f
+        var l2 = 0f
+        var lh = 0f
+        var kick = 0f
+        if (live) {
+            visualizer.tick(dt, t / 1_000_000L)
+            val lv = visualizer.levels
+            lb = lv[0].coerceIn(0f, 1f)
+            l1 = lv[1].coerceIn(0f, 1f)
+            l2 = lv[2].coerceIn(0f, 1f)
+            lh = lv[3].coerceIn(0f, 1f)
+            kick = visualizer.kick
         }
+        if (beatOn) {
+            // levels are already smoothed (instant attack, ~100 ms release): use them directly, no second layer
+            val en = (0.5f * lb + 0.3f * l1 + 0.2f * l2).coerceIn(0f, 1f)
+            if (live) {
+                beat = en; bassS = lb; midS = (l1 + l2) * 0.5f; highS = lh
+            } else {
+                // playback just stopped: the meter is no longer ticking, so fade the stored values out
+                beat = sm(beat, 0f, dt); bassS = sm(bassS, 0f, dt); midS = sm(midS, 0f, dt); highS = sm(highS, 0f, dt)
+            }
+            driftPhase += dt
+            driftX = sin(driftPhase * 1.3f) * midS * dp(6f)
+            driftY = cos(driftPhase * 1.0f) * midS * dp(6f)
+        } else {
+            beat = 0f; bassS = 0f; midS = 0f; highS = 0f; driftX = 0f; driftY = 0f
+        }
+        // Bounce: breathing base from the energy plus a swell envelope raised on the bass onset frame (the onset
+        // is detected on the raw signal inside IdleVisualizer and delayed with the levels). A soft, well-damped
+        // spring follows, so the bean rises and settles like liquid.
+        val drive = (beat * 1.8f).coerceAtMost(1f)
+        kickEnv *= exp(-dt / 0.22f)
+        if (beatOn && kick > 0f) kickEnv = max(kickEnv, kick)
+        val swell = if (expandedTarget) 0.015f * drive + 0.02f * kickEnv else 0.05f * drive + 0.22f * kickEnv
+        pulseS.target = 1f + beatAmount * swell
+        pulseS.step(dt)
+        pulseS.value = pulseS.value.coerceIn(0.97f, 1.3f)
+        if (expandedTarget || dragMode != 0) invalidate() else invalidateBean()
         vizPosted = true
-        Choreographer.getInstance().postFrameCallbackDelayed(vizCb, if (live) 25L else 0L)
+        Choreographer.getInstance().postFrameCallback(vizCb)
     }
 
     private fun drawIdle(c: Canvas, ia: Float) {
@@ -1272,7 +1509,10 @@ class EdgeView(ctx: Context) : View(ctx) {
         val s = liveSize
         val w = min(wS.value, hS.value)
         val f = ((w - idle) / max(s - idle, 1f)).coerceIn(0f, 1f)
-        val la = f * f * (3f - 2f * f) * (1f - progress * 4f).coerceIn(0f, 1f)
+        // fade only with the morph from idle and while a bigger (opening / collapsing) panel covers the live
+        // size; the live size itself is not "opening", so it must never dim the content
+        val over = ((s * 1.35f - max(wS.value, hS.value)) / (s * 0.35f)).coerceIn(0f, 1f)
+        val la = f * f * (3f - 2f * f) * over
         if (la <= 0.01f) return
         val ai = (255f * la + 0.5f).toInt()
         val call = a.kind == LiveActivity.Kind.CALL
@@ -1282,11 +1522,11 @@ class EdgeView(ctx: Context) : View(ctx) {
         val ps = press.value * (w / s).coerceIn(0.5f, 1.15f)
         c.scale(ps, ps)
         // progress arc along the curved rim
-        val r = s - dp(5f)
+        val r = sr(s - dp(5f))
         liveOval.set(-r, -r, r, r)
-        arcPaint.strokeWidth = dp(3f)
-        arcPaint.color = Color.WHITE
-        arcPaint.alpha = (255f * 0.14f * la + 0.5f).toInt()
+        arcPaint.strokeWidth = sw(dp(4f))
+        arcPaint.color = ink
+        arcPaint.alpha = (255f * 0.24f * la + 0.5f).toInt()
         c.drawArc(liveOval, 180f + SL_A0, SL_A1 - SL_A0, false, arcPaint)
         arcPaint.color = tint
         arcPaint.alpha = ai
@@ -1309,15 +1549,13 @@ class EdgeView(ctx: Context) : View(ctx) {
             val ic = icon(a.iconRes, false)
             ic.bounds = liveIconRect
             ic.alpha = ai
-            ic.draw(c)
+            drawIc(c, ic)
         }
         // short title along the rim
+        liveTitlePaint.color = ink
         liveTitlePaint.alpha = ai
         if (liveTitleShown.isNotEmpty()) {
-            c.drawTextOnPath(
-                liveTitleShown, if (call) liveTitlePathCall else liveTitlePath,
-                liveTitleOff, 0f, liveTitlePaint
-            )
+            arcText(c, liveTitleShown, if (call) liveTitlePathCall else liveTitlePath, liveTitleOff, liveTitlePaint)
         }
         if (call) {
             if (a.answer != null) {
@@ -1327,7 +1565,7 @@ class EdgeView(ctx: Context) : View(ctx) {
                 val ic = icon(R.drawable.ic_phone, true)
                 ic.bounds = liveAnsRect
                 ic.alpha = ai
-                ic.draw(c)
+                drawIc(c, ic)
             }
             if (a.decline != null) {
                 fill.color = C_DECLINE
@@ -1336,12 +1574,12 @@ class EdgeView(ctx: Context) : View(ctx) {
                 val ic = icon(R.drawable.ic_phone_off, true)
                 ic.bounds = liveDecRect
                 ic.alpha = ai
-                ic.draw(c)
+                drawIc(c, ic)
             }
         }
         if (liveSec != null) {
             val ang = Math.toRadians(88.0)
-            fill.color = Color.WHITE
+            fill.color = ink
             fill.alpha = (255f * 0.7f * la + 0.5f).toInt()
             c.drawCircle(-r * cos(ang).toFloat(), -r * sin(ang).toFloat(), dp(2.2f), fill)
         }
@@ -1379,7 +1617,14 @@ class EdgeView(ctx: Context) : View(ctx) {
     private fun onBeanTap(x: Float, y: Float) {
         val a = liveCur
         if (liveWanted && a != null) {
-            if (a.key == TimerControl.KEY_DONE) {
+            if (LiveTest.owns(a.key)) {
+                // a live-test entry: the pulsing bean or a call dot just ends the test
+                if (a.key == TimerControl.KEY_DONE || liveDotHit(x, y) != 0) {
+                    haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                    LiveTest.endKey(a.key)
+                    return
+                }
+            } else if (a.key == TimerControl.KEY_DONE) {
                 // tapping the pulsing bean silences the timer alarm
                 haptic(HapticFeedbackConstants.VIRTUAL_KEY)
                 TimerControl.stopAlarm(context)
@@ -1413,63 +1658,103 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     /** Edge fillet radius for a shape of the given size: scaled with the idle size, at most 40% of it. */
     private fun flareFor(size: Float, p: Float): Float {
-        if (flarePx <= 0.5f) return 0f
+        if (flarePx <= 0.5f || floatOn) return 0f
         val fIdle = min(flarePx * idle / dp(48f), 0.4f * idle)
         val f = fIdle + (flarePx - fIdle) * p
         return min(f, 0.4f * size)
     }
 
     /**
-     * ONE geometry for fill, region, hit test, pattern clip and rim: the quarter-ellipse bean centred on the
-     * corner plus exact concave fillets ("ears") of radius [fl] tangent to the bean and to the screen edges.
-     * With [hw] > 0 it builds the rim centre line instead: the same outline inset by [hw] toward the fill, as an
-     * open path that starts and ends on the screen edges (no stroke is ever clipped or doubled).
+     * Resolves the shape parameters for the current flare [fl] (see [flareFor]):
+     * - attached to the corner: flare ears on both screen edges, the tip follows the display corner;
+     * - position > 0 (not floating): the shape leaves the side bezel, so no side ear, a rounded top-of-wall corner;
+     * - floating: no ears at all, the whole island is rounded (both arc ends and the corner tip).
      */
-    private fun buildShape(p: Path, ox: Float, oy: Float, w: Float, h: Float, tip: Float, fl: Float, hw: Float) {
+    private fun resolveGeom(fl: Float) {
+        val rd = dp(ROUND_DP)
+        if (floatOn) {
+            gFlB = 0f
+            gFlS = 0f
+            gRhoB = rd
+            gRhoS = rd
+            gTip = dp(FLOAT_TIP_DP)
+        } else if (placeX > 0) {
+            gFlB = fl
+            gFlS = 0f
+            gRhoB = 0f
+            gRhoS = rd
+            gTip = 0f
+        } else {
+            gFlB = fl
+            gFlS = fl
+            gRhoB = 0f
+            gRhoS = 0f
+            gTip = tipPx
+        }
+    }
+
+    /**
+     * ONE geometry for fill, region, hit test and pattern clip: the quarter-ellipse bean centred on the corner,
+     * its two arc ends either meeting the screen edges through exact concave fillets ("ears", gFl*), or rounded
+     * (gRho*) when that edge is not attached, plus the corner tip. Parameters come from [resolveGeom].
+     */
+    private fun buildShape(p: Path, ox: Float, oy: Float, w: Float, h: Float) {
         p.rewind()
         val right = ox + w
         val bottom = oy + h
-        val f = if (fl > 0.5f) fl else 0f
-        val rim = hw > 0f
-        arcRect.set(right - (w - hw), bottom - (h - hw), right + (w - hw), bottom + (h - hw))
-        if (f <= 0f) {
-            if (rim) {
-                p.arcTo(arcRect, 180f, 90f, true)
-                return
-            }
-            p.moveTo(ox, bottom)
-            p.arcTo(arcRect, 180f, 90f, false)
-        } else {
-            val r0 = min(w, h)
-            val s0 = sqrt(r0 * r0 + 2f * r0 * f)
-            val th = Math.toDegrees(atan2(f.toDouble(), s0.toDouble())).toFloat()
+        val r0 = min(w, h)
+        val fB = if (gFlB > 0.5f) gFlB else 0f
+        val fS = if (gFlS > 0.5f) gFlS else 0f
+        val startX: Float
+        val aB: Float
+        if (fB > 0f) {
+            val s0 = sqrt(r0 * r0 + 2f * r0 * fB)
+            val th = Math.toDegrees(atan2(fB.toDouble(), s0.toDouble())).toFloat()
             val c1x = right - s0
-            val c1y = bottom - f
-            val c2x = right - f
-            val c2y = bottom - s0
-            val rf = f + hw
-            val a0 = if (rim) Math.toDegrees(asin((f / rf).toDouble())).toFloat() else 90f
-            val a1 = if (rim) Math.toDegrees(kotlin.math.acos((f / rf).toDouble())).toFloat() else 0f
-            if (!rim) p.moveTo(c1x, bottom)
-            earRect.set(c1x - rf, c1y - rf, c1x + rf, c1y + rf)
-            p.arcTo(earRect, a0, th - a0, rim)
-            p.arcTo(arcRect, 180f + th, 90f - 2f * th, false)
-            earRect.set(c2x - rf, c2y - rf, c2x + rf, c2y + rf)
-            p.arcTo(earRect, 90f - th, a1 - (90f - th), false)
-            if (rim) return
-            val t = min(tip, min(w, h))
-            if (t > 0.5f) {
-                p.lineTo(right, bottom - t)
-                arcRect.set(right - 2f * t, bottom - 2f * t, right, bottom)
-                p.arcTo(arcRect, 0f, 90f, false)
-            } else {
-                p.lineTo(right, bottom)
-            }
-            p.lineTo(c1x, bottom)
-            p.close()
-            return
+            val c1y = bottom - fB
+            p.moveTo(c1x, bottom)
+            earRect.set(c1x - fB, c1y - fB, c1x + fB, c1y + fB)
+            p.arcTo(earRect, 90f, th - 90f, false)
+            aB = 180f + th
+            startX = c1x
+        } else if (gRhoB > 0.5f) {
+            val rb = min(gRhoB, 0.3f * r0)
+            val sB = sqrt((r0 - rb) * (r0 - rb) - rb * rb)
+            val al = Math.toDegrees(atan2(rb.toDouble(), sB.toDouble())).toFloat()
+            val cxx = right - sB
+            val cyy = bottom - rb
+            p.moveTo(cxx, bottom)
+            earRect.set(cxx - rb, cyy - rb, cxx + rb, cyy + rb)
+            p.arcTo(earRect, 90f, 90f + al, false)
+            aB = 180f + al
+            startX = cxx
+        } else {
+            p.moveTo(right - r0, bottom)
+            aB = 180f
+            startX = right - r0
         }
-        val t = min(tip, min(w, h))
+        arcRect.set(right - r0, bottom - r0, right + r0, bottom + r0)
+        if (fS > 0f) {
+            val s0 = sqrt(r0 * r0 + 2f * r0 * fS)
+            val th = Math.toDegrees(atan2(fS.toDouble(), s0.toDouble())).toFloat()
+            p.arcTo(arcRect, aB, 270f - th - aB, false)
+            val c2x = right - fS
+            val c2y = bottom - s0
+            earRect.set(c2x - fS, c2y - fS, c2x + fS, c2y + fS)
+            p.arcTo(earRect, 90f - th, th - 90f, false)
+        } else if (gRhoS > 0.5f) {
+            val rs = min(gRhoS, 0.3f * r0)
+            val sS = sqrt((r0 - rs) * (r0 - rs) - rs * rs)
+            val be = Math.toDegrees(atan2(rs.toDouble(), sS.toDouble())).toFloat()
+            p.arcTo(arcRect, aB, 270f - be - aB, false)
+            val c2x = right - rs
+            val c2y = bottom - sS
+            earRect.set(c2x - rs, c2y - rs, c2x + rs, c2y + rs)
+            p.arcTo(earRect, 270f - be, 90f + be, false)
+        } else {
+            p.arcTo(arcRect, aB, 270f - aB, false)
+        }
+        val t = min(gTip, 0.4f * r0)
         if (t > 0.5f) {
             p.lineTo(right, bottom - t)
             arcRect.set(right - 2f * t, bottom - 2f * t, right, bottom)
@@ -1477,6 +1762,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         } else {
             p.lineTo(right, bottom)
         }
+        p.lineTo(startX, bottom)
         p.close()
     }
 
@@ -1484,16 +1770,16 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     /**
      * The same outline for a non-square shape: built as a square of the smaller side (flares and tip included),
-     * then stretched about the corner to w x h. Fill, flares, rim, pattern clip and region all come from this one
+     * then stretched about the corner to w x h. Fill, flares, pattern clip and region all come from this one
      * path per frame, so they can never drift apart while the width and height springs lead and lag.
      */
-    private fun buildShapeFit(p: Path, right: Float, bottom: Float, w: Float, h: Float, tip: Float, fl: Float, hw: Float) {
+    private fun buildShapeFit(p: Path, right: Float, bottom: Float, w: Float, h: Float) {
         val m = min(w, h)
         if (abs(w - h) < 0.5f) {
-            buildShape(p, right - w, bottom - h, w, h, tip, fl, hw)
+            buildShape(p, right - w, bottom - h, w, h)
             return
         }
-        buildShape(p, right - m, bottom - m, m, m, tip, fl, hw)
+        buildShape(p, right - m, bottom - m, m, m)
         fitMatrix.setScale(w / m, h / m, right, bottom)
         p.transform(fitMatrix)
     }
@@ -1528,14 +1814,14 @@ class EdgeView(ctx: Context) : View(ctx) {
     private fun layoutLive() {
         val s = liveSize
         val cen = 0.4244f * s
-        val ih = dp(9f).toInt()
+        val ih = dp(12f).toInt()
         liveIconRect.set((-cen).toInt() - ih, (-cen).toInt() - ih, (-cen).toInt() + ih, (-cen).toInt() + ih)
         val tr = s - dp(17f)
-        Geo.arcPath(liveTitlePath, xOval, tr, LV_A0, LV_A1)
+        Geo.textArcPath(liveTitlePath, xOval, tr, LV_A0, LV_A1)
         liveTitleLen = tr * Math.toRadians((LV_A1 - LV_A0).toDouble()).toFloat()
         // call title sits between the two dots
         val call0 = 28f
-        Geo.arcPath(liveTitlePathCall, xOval, tr, call0, LV_A1 - (call0 - LV_A0))
+        Geo.textArcPath(liveTitlePathCall, xOval, tr, call0, LV_A1 - (call0 - LV_A0))
         liveCallLen = tr * Math.toRadians((LV_A1 - LV_A0 - 2f * (call0 - LV_A0)).toDouble()).toFloat()
         liveDotR = dp(8f)
         val dr = s - dp(16f)
@@ -1564,15 +1850,107 @@ class EdgeView(ctx: Context) : View(ctx) {
         }
     }
 
+    /** [black] = false: the icon in the ink colour; true: in the flipped ink (for ink-coloured surfaces). Cached per ink. */
     internal fun icon(res: Int, black: Boolean): Drawable {
         val cache = if (black) blackIcons else whiteIcons
         var d = cache.get(res)
         if (d == null) {
             d = context.getDrawable(res)!!.mutate()
-            d.setTint(if (black) Color.BLACK else Color.WHITE)
+            d.setTint(if (black) inkOn else ink)
             cache.put(res, d)
         }
         return d
+    }
+
+    /** Draws an icon / drawable un-mirrored (when the edge is on the left the canvas is mirrored). */
+    internal fun drawIc(c: Canvas, d: Drawable) {
+        if (!mirror) {
+            d.draw(c)
+            return
+        }
+        val b = d.bounds
+        c.save()
+        c.scale(-1f, 1f, b.exactCenterX(), b.exactCenterY())
+        d.draw(c)
+        c.restore()
+    }
+
+    /** Cancels the left-side canvas mirror in a local frame whose origin is the centre of the item being drawn. */
+    internal fun unflip(c: Canvas) {
+        if (mirror) c.scale(-1f, 1f)
+    }
+
+    /** Pixel mode: the whole-device-pixel cell the overlay grid uses, else 0. */
+    @JvmField internal var snapCell = 0f
+
+    /** A stroke width snapped to whole cells in pixel mode (at least one cell), else unchanged. */
+    internal fun sw(v: Float): Float = if (snapCell > 0f) max(snapCell, Math.round(v / snapCell) * snapCell) else v
+
+    /** A radius / length snapped to whole cells in pixel mode, else unchanged. */
+    internal fun sr(v: Float): Float = if (snapCell > 0f) Math.round(v / snapCell) * snapCell else v
+
+    /** The pixel font in pixel mode, else [d] (text paints use it so measuring matches what is replayed). */
+    internal fun face(d: Typeface): Typeface = PixelMode.typeface(context) ?: d
+
+    /** Straight text that stays upright and readable on the left side (positions stay mirrored). */
+    internal fun text(c: Canvas, s: String, x: Float, y: Float, paint: Paint) {
+        if (!mirror) {
+            if (pixelHook != null && pixelLayer.recText(s, x, y, paint)) return
+            c.drawText(s, x, y, paint)
+            return
+        }
+        val al = paint.textAlign
+        if (al == Paint.Align.LEFT) paint.textAlign = Paint.Align.RIGHT
+        else if (al == Paint.Align.RIGHT) paint.textAlign = Paint.Align.LEFT
+        c.save()
+        c.scale(-1f, 1f)
+        if (pixelHook == null || !pixelLayer.recText(s, -x, y, paint)) c.drawText(s, -x, y, paint)
+        c.restore()
+        paint.textAlign = al
+    }
+
+    /**
+     * Text along an arc built with [Win.textArcPath] / Geo.textArcPath. [off] is the offset from the arc's start
+     * in the normal (right side) layout; on the left side the path is reversed, so the offset is mirrored too and
+     * the text block keeps its mirrored position while still reading left to right.
+     */
+    internal fun arcText(c: Canvas, s: String, path: Path, off: Float, paint: Paint) {
+        if (!mirror) {
+            if (pixelHook != null && pixelLayer.recPath(s, path, off, paint)) return
+            c.drawTextOnPath(s, path, off, 0f, paint)
+            return
+        }
+        pathMeasure.setPath(path, false)
+        val o = pathMeasure.length - off - paint.measureText(s)
+        c.save()
+        c.scale(-1f, 1f)
+        if (pixelHook == null || !pixelLayer.recPath(s, path, o, paint)) c.drawTextOnPath(s, path, o, 0f, paint)
+        c.restore()
+    }
+
+    /** Recomputes the ink colours from the base colour and re-tints every cached icon. */
+    private fun applyInk() {
+        val b = baseColor
+        val lum = (0.299f * Color.red(b) + 0.587f * Color.green(b) + 0.114f * Color.blue(b)) / 255f
+        val light = lum > 0.5f
+        lightBody = light
+        val i = if (light) Color.BLACK else Color.WHITE
+        val o = if (light) Color.WHITE else Color.BLACK
+        if ((b and 0xFFFFFF) == 0) {
+            cFill = DEF_FILL
+            cTrack = DEF_TRACK
+            cGrey = DEF_GREY
+        } else {
+            cFill = mixColor(b or (0xFF shl 24), i, 0.10f)
+            cTrack = mixColor(b or (0xFF shl 24), i, 0.17f)
+            cGrey = mixColor(b or (0xFF shl 24), i, 0.55f)
+        }
+        looks.ink = i
+        if (i == ink && o == inkOn) return
+        ink = i
+        inkOn = o
+        for (k in 0 until whiteIcons.size()) whiteIcons.valueAt(k).setTint(i)
+        for (k in 0 until blackIcons.size()) blackIcons.valueAt(k).setTint(o)
     }
 
     internal fun warm(res: Int) {
@@ -1646,7 +2024,13 @@ class EdgeView(ctx: Context) : View(ctx) {
                 w = regionClosed + dp(6f); h = w
                 fl = flareFor(regionClosed, 0f)
             }
-            buildShape(regionPath, ww - w, hh - h, w, h, tipPx, fl, 0f)
+            resolveGeom(fl)
+            lastDw = -1f // the shared shape parameters were just overwritten: the draw path rebuilds
+            buildShape(regionPath, ww - w, hh - h, w, h)
+            if (mirror) {
+                mirrorMat.setScale(-1f, 1f, ww / 2f, 0f)
+                regionPath.transform(mirrorMat)
+            }
             clipRegion.set(0, 0, ww, hh)
             region.setPath(regionPath, clipRegion)
             if (!regionExpanded) {
@@ -1654,7 +2038,8 @@ class EdgeView(ctx: Context) : View(ctx) {
                 // starting just above / left of the bean comes here, not to the launcher underneath
                 ex = max(w, grabPx.toFloat())
                 val g = ceil(ex).toInt()
-                region.op(max(0, ww - g), max(0, hh - g), ww, hh, Region.Op.UNION)
+                if (mirror) region.op(0, max(0, hh - g), min(ww, g), hh, Region.Op.UNION)
+                else region.op(max(0, ww - g), max(0, hh - g), ww, hh, Region.Op.UNION)
             }
         }
         host?.onRegionChanged(region)
@@ -1668,16 +2053,17 @@ class EdgeView(ctx: Context) : View(ctx) {
      * The bottom home / recents swipe cannot be excluded by apps.
      */
     private fun updateExclusion(w: Float, h: Float, fl: Float) {
-        val want = !hidden && width > 0 && height > 0 && w > 0f
+        // only while the window touches the side bezel: a floating / moved edge is not in the gesture zone
+        val want = !hidden && width > 0 && height > 0 && w > 0f && placeX == 0
         if (want) {
             val strip = min(ceil(w + fl).toInt(), ceil(dp(48f)).toInt())
             val hh = min(ceil(h + fl).toInt(), ceil(dp(200f)).toInt())
-            val l = max(0, width - strip)
+            val l = if (mirror) 0 else max(0, width - strip)
             val t = max(0, height - hh)
             if (exclSet && l == exclL && t == exclT) return
             exclL = l
             exclT = t
-            exclRect.set(l, t, width, height)
+            if (mirror) exclRect.set(0, t, strip, height) else exclRect.set(l, t, width, height)
             systemGestureExclusionRects = exclList
             exclSet = true
         } else if (exclSet) {
@@ -1769,9 +2155,18 @@ class EdgeView(ctx: Context) : View(ctx) {
         requestFrames()
     }
 
+    private var fastVote = false
+
+    private fun setFast(on: Boolean) {
+        if (on == fastVote) return
+        fastVote = on
+        host?.onFast(on)
+    }
+
     private fun requestFrames() {
         if (framePosted) return
         framePosted = true
+        setFast(true)
         Choreographer.getInstance().postFrameCallback(frameCb)
     }
 
@@ -1818,6 +2213,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         } else {
             regionExpanded = false
             settledExpanded = false
+            setFast(false)
             syncShown()
             stopSources()
             regionClosed = closedSize()
@@ -1864,12 +2260,15 @@ class EdgeView(ctx: Context) : View(ctx) {
         coff = (1f - contentAlpha) * dp(16f)
         // Static shape: keep the Path objects untouched so HWUI reuses their cached geometry.
         val rw = rimPaint.strokeWidth
-        if (dw == lastDw && dh == lastDh && width == lastW && height == lastH && tipPx == lastTip && fl == lastFl && rw == lastRimW) return
+        if (dw == lastDw && dh == lastDh && width == lastW && height == lastH && tipPx == lastTip && fl == lastFl && rw == lastRimW &&
+            geomVer == lastGeomVer
+        ) return
         lastDw = dw; lastDh = dh; lastW = width; lastH = height; lastTip = tipPx; lastFl = fl; lastRimW = rw
+        lastGeomVer = geomVer
         val rt = width.toFloat()
         val bt = height.toFloat()
-        buildShapeFit(path, rt, bt, dw, dh, tipPx, fl, 0f)
-        buildShapeFit(rimPath, rt, bt, dw, dh, tipPx, fl, rimPaint.strokeWidth / 2f)
+        resolveGeom(fl)
+        buildShapeFit(path, rt, bt, dw, dh)
         val r = max(dw, dh) * 1.15f / GR
         gradScale = r
         gradMatrix.setTranslate(-width.toFloat(), -height.toFloat())
@@ -1878,8 +2277,24 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     override fun onDraw(c: Canvas) {
+        val hook = pixelHook
+        if (hook != null) hook(c, drawAllFn) else drawAll(c)
+    }
+
+    /** All drawing, in the logical right-corner frame; on the left side the canvas is mirrored once, here. */
+    private fun drawAll(c: Canvas) {
+        buildLivePath()
+        if (glassOn) {
+            updateGlassBlur()
+            if (glassBlur.active && glassBlurPx > 0 && !hidden && opacityPct >= 100) glassBlur.draw(c)
+        }
+        if (mirror) {
+            c.save()
+            c.translate(width.toFloat(), 0f)
+            c.scale(-1f, 1f)
+        }
         // preview backdrop: a quarter disc that fits inside the window, so it never ends in a cut edge
-        if (backdropOn) c.drawCircle(width.toFloat(), height.toFloat(), min(width, height) - 1f, backdropPaint)
+        if (backdropOn && !glassOn) c.drawCircle(width.toFloat(), height.toFloat(), min(width, height) - 1f, backdropPaint)
         buildLivePath()
         val g = glow
         drawShapeFill(c, g)
@@ -1899,6 +2314,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         val a = contentAlpha
         if (a > 0.004f && vizOn && musicPlaying && vizRunning) drawOpenViz(c, a)
         if (a > 0.004f && resourcesReady) drawContent(c, a)
+        if (mirror) c.restore()
     }
 
     /**
@@ -1909,14 +2325,14 @@ class EdgeView(ctx: Context) : View(ctx) {
         c.save()
         c.translate(width.toFloat(), height.toFloat())
         c.scale(gradScale, gradScale)
-        c.drawPath(unitPath, shapePaint)
-        if (glowOn && g > 0.01f) {
+        c.drawPath(unitPath, if (glassOn) glassFill else shapePaint)
+        if (glowOn && g > 0.01f && !glassOn) {
             glowPaint.alpha = (255f * g + 0.5f).toInt()
             c.drawPath(unitPath, glowPaint)
         }
         c.restore()
         val b = if (beatOn) bassS else 0f
-        if (gradientActive && b > 0.01f) {
+        if (gradientActive && b > 0.01f && !glassOn) {
             // The core is a radial fade that ends fully transparent inside the shape, so it needs no clip.
             val sz = min(drawW, drawH)
             val coreR = min(sz * 0.8f * (1f + 0.35f * b), sz * 1.02f)
@@ -2055,8 +2471,8 @@ class EdgeView(ctx: Context) : View(ctx) {
         val step = seg + gap
         val cap = Math.toDegrees((dp(1.5f) / rd).toDouble()).toFloat().coerceAtMost(seg / 3f)
         xOval.set(xCx - rd, xCy - rd, xCx + rd, xCy + rd)
-        arcPaint.strokeWidth = dp(3f)
-        arcPaint.color = C_BAR
+        arcPaint.strokeWidth = sw(dp(3f))
+        arcPaint.color = cGrey
         arcPaint.alpha = (255f * 0.6f * a + 0.5f).toInt()
         for (i in 0 until n) {
             c.drawArc(xOval, a0 + i * step + cap, seg - 2f * cap, false, arcPaint)
@@ -2083,9 +2499,9 @@ class EdgeView(ctx: Context) : View(ctx) {
         c.save()
         val s2 = sc * (if (px) PRESS_SCALE else 1f)
         c.scale(s2, s2, cx, cy)
-        linePaint.color = Color.WHITE
+        linePaint.color = ink
         linePaint.alpha = (255f * (if (px) 1f else 0.6f) * a + 0.5f).toInt()
-        linePaint.strokeWidth = dp(2f)
+        linePaint.strokeWidth = sw(dp(2f))
         val h = dp(5.5f)
         c.drawLine(cx - h, cy - h, cx + h, cy + h, linePaint)
         c.drawLine(cx - h, cy + h, cx + h, cy - h, linePaint)
@@ -2141,16 +2557,20 @@ class EdgeView(ctx: Context) : View(ctx) {
         return true
     }
 
+    /** Local x / raw x in the logical (right-corner) frame: mirrored back when the edge is on the left. */
+    private fun lx(ev: MotionEvent): Float = if (mirror) width - ev.x else ev.x
+    private fun rawLx(ev: MotionEvent): Float = if (mirror) -ev.rawX else ev.rawX
+
     private fun handleDown(ev: MotionEvent): Boolean {
-        val x = ev.x
+        val x = lx(ev)
         val y = ev.y
-        val rx = ev.rawX
+        val rx = rawLx(ev)
         val ry = ev.rawY
         ensureResources()
         buildLivePath()
         // the published touch region is the single hit shape (it already includes the flares, the bean slop and,
         // while closed, the invisible grab square - a DOWN there is handled exactly like one on the bean)
-        if (!region.contains(x.toInt(), y.toInt())) return false
+        if (!region.contains(ev.x.toInt(), y.toInt())) return false
         downPx = x - width
         downPy = y - height
         lastX = x
@@ -2177,6 +2597,8 @@ class EdgeView(ctx: Context) : View(ctx) {
             // Pay the listener-registration cost during the finger-down, before the expand animation.
             ensureSources()
             press.target = PRESS_SCALE
+            // a long press on the closed bean (idle or live) hides it for a while (see onLongPress)
+            postDelayed(longPressRunnable, longPressMs)
             requestFrames()
         } else {
             startMode = MODE_EXPANDED
@@ -2249,15 +2671,15 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     private fun handleMove(ev: MotionEvent) {
-        val rx = ev.rawX
+        val rx = rawLx(ev)
         val ry = ev.rawY
         addMove(ev, rx, ry)
-        lastX = ev.x
+        lastX = lx(ev)
         lastY = ev.y
         val cw = captureWin
         if (cw != null) {
             moved = true
-            toLocal(ev.x, ev.y, cw.index - pageS.value)
+            toLocal(lx(ev), ev.y, cw.index - pageS.value)
             cw.dragTo(lpX, lpY)
             return
         }
@@ -2376,7 +2798,7 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     /** True unless the outside touch landed within 24 dp of the shape edge (likely a missed swipe). */
     private fun outsideFarEnough(ev: MotionEvent): Boolean {
-        val px = ev.x - width
+        val px = lx(ev) - width
         val py = ev.y - height
         val d = sqrt(px * px + py * py)
         return d - rad >= dp(24f)
@@ -2396,9 +2818,9 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     private fun handleUp(ev: MotionEvent, cancel: Boolean) {
-        val rx = ev.rawX
+        val rx = rawLx(ev)
         val ry = ev.rawY
-        val x = ev.x
+        val x = lx(ev)
         val y = ev.y
         cancelItemLongPress()
         var vx = 0f
@@ -2464,6 +2886,15 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     private fun onLongPress() {
         if (!gestureActive) return
+        if (startMode == MODE_IDLE) {
+            if (expandedTarget || dragMode != 0 || moved) return
+            longFired = true
+            val act = Prefs.longAction(context)
+            if (act == Prefs.LA_NONE) return
+            haptic(HapticFeedbackConstants.LONG_PRESS)
+            runLongAction(act)
+            return
+        }
         val item = pressed
         val w = pressedWin
         if (w != null && w.longPressable(item)) {
@@ -2481,11 +2912,47 @@ class EdgeView(ctx: Context) : View(ctx) {
     // ================================================================ init
 
     init {
+        floatOn = Prefs.floatOn(ctx)
+        mirror = Prefs.sideLeft(ctx)
+        Geo.mirror = mirror
+        placeX = placeXFor(ctx)
+        placeY = placeYFor(ctx)
         applyLooksNow()
         reloadWindows()
     }
 
     internal companion object {
+        /** Corner rounding of the floating island (dp). */
+        const val ROUND_DP = 12f
+        const val FLOAT_TIP_DP = 16f
+
+        /**
+         * Inset in px of the floating island from BOTH the bottom and the side edge: the float gap, clamped so the
+         * open panel stays on screen on both axes. Not floating: 0 (the edge sits in the corner). edgePos is ignored.
+         */
+        fun floatInset(ctx: Context): Int {
+            if (!Prefs.floatOn(ctx)) return 0
+            val d = ctx.resources.displayMetrics.density
+            val base = Prefs.floatGapDp(ctx) * d
+            val b = try {
+                (ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).maximumWindowMetrics.bounds
+            } catch (e: Exception) {
+                null
+            }
+            val dm = ctx.resources.displayMetrics
+            val sw = (b?.width() ?: dm.widthPixels).toFloat()
+            val sh = (b?.height() ?: dm.heightPixels).toFloat()
+            val radPx = Prefs.openDp(ctx).coerceIn(170f, 300f) * d
+            val maxI = max(0f, min(sw, sh) - radPx - 4f * d)
+            return min(base, maxI).toInt()
+        }
+
+        /** Distance in px of the window's side edge from the screen's side edge (LayoutParams.x). */
+        fun placeXFor(ctx: Context): Int = floatInset(ctx)
+
+        /** Distance in px of the window's bottom edge from the screen's bottom edge (LayoutParams.y). */
+        fun placeYFor(ctx: Context): Int = floatInset(ctx)
+
         const val PRESS_SCALE = 0.92f
         const val TAP_MS = 300L
         const val MODE_IDLE = 0
@@ -2496,7 +2963,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         const val SL_A1 = 82f
         const val LV_A0 = 16f
         const val LV_A1 = 74f
-        const val LIVE_SCALE = 1.55f
+        const val LIVE_SCALE = 1.8f
         val C_RED = Color.parseColor("#FF4B3E")
         val C_BAR = Color.parseColor("#5A5A5E")
         val C_CREAM = Color.parseColor("#F2EDE4")

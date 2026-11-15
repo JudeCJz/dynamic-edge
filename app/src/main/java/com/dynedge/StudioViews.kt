@@ -49,8 +49,10 @@ class RoundIcon(ctx: Context, res: Int, desc: String, private val toggle: Boolea
     var onClick: () -> Unit = {}
 
     private val d = resources.displayMetrics.density
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val icon: Drawable = ctx.getDrawable(res)!!.mutate()
+    private val px = PixelMode.on(ctx)
+    private val grid = if (px) PixelMode.gridPx(ctx) else 0f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !px }
+    private val icon: Drawable = PixelMode.wrapIcon(ctx, ctx.getDrawable(res)!!.mutate())
 
     init {
         isClickable = true
@@ -92,17 +94,17 @@ class RoundIcon(ctx: Context, res: Int, desc: String, private val toggle: Boolea
     override fun onDraw(c: Canvas) {
         val cx = width / 2f
         val cy = height / 2f
-        val r = 20 * d
+        val r = if (px) PixelMode.snap(20 * d, grid) else 20 * d
         val solid = if (toggle) checked else filled
         if (solid) {
             p.style = Paint.Style.FILL
             p.color = accent
-            c.drawCircle(cx, cy, r, p)
+            c.drawDisc(px, cx, cy, r, p)
         } else if (toggle) {
             p.style = Paint.Style.STROKE
-            p.strokeWidth = 1.5f * d
+            p.strokeWidth = if (px) grid else 1.5f * d
             p.color = Skin.TRACK
-            c.drawCircle(cx, cy, r - 0.75f * d, p)
+            c.drawDisc(px, cx, cy, r - p.strokeWidth / 2f, p)
         }
         val s = (20 * d).toInt()
         val l = (cx - s / 2f).toInt()
@@ -126,7 +128,9 @@ class ToggleSwitch(ctx: Context, private val desc: String) : View(ctx) {
     var onToggle: (Boolean) -> Unit = {}
 
     private val d = resources.displayMetrics.density
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val px = PixelMode.on(ctx)
+    private val grid = if (px) PixelMode.gridPx(ctx) else 0f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !px }
 
     init {
         isClickable = true
@@ -156,17 +160,24 @@ class ToggleSwitch(ctx: Context, private val desc: String) : View(ctx) {
     }
 
     override fun onDraw(c: Canvas) {
-        val th = 26 * d
-        val tw = 44 * d
-        val l = (width - tw) / 2f
-        val t = (height - th) / 2f
+        val th = if (px) PixelMode.snap(26 * d, grid * 2f) else 26 * d
+        val tw = if (px) PixelMode.snap(44 * d, grid * 2f) else 44 * d
+        val l = if (px) PixelMode.snap((width - tw) / 2f, grid) else (width - tw) / 2f
+        val t = if (px) PixelMode.snap((height - th) / 2f, grid) else (height - th) / 2f
         val r = th / 2f
         p.style = Paint.Style.FILL
         p.color = if (checked) accent else Skin.TRACK
-        c.drawRoundRect(l, t, l + tw, t + th, r, r, p)
+        c.drawPill(px, l, t, l + tw, t + th, r, p)
         p.color = if (checked) Skin.onColor(accent) else Skin.TEXT_2
-        val kx = if (checked) l + tw - r else l + r
-        c.drawCircle(kx, t + r, r - 2.5f * d, p)
+        if (px) {
+            // a square knob that snaps to the left or right end of the track
+            val k = th - 2 * grid
+            val kl = if (checked) l + tw - grid - k else l + grid
+            c.drawRect(kl, t + grid, kl + k, t + grid + k, p)
+        } else {
+            val kx = if (checked) l + tw - r else l + r
+            c.drawCircle(kx, t + r, r - 2.5f * d, p)
+        }
     }
 }
 
@@ -179,7 +190,9 @@ class HueCell(ctx: Context) : View(ctx) {
     var ring = Color.WHITE
 
     private val d = resources.displayMetrics.density
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val px = PixelMode.on(ctx)
+    private val grid = if (px) PixelMode.gridPx(ctx) else 0f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !px }
     private var sweep: Shader? = null
 
     init {
@@ -198,22 +211,23 @@ class HueCell(ctx: Context) : View(ctx) {
         val cx = width / 2f
         val cy = height / 2f
         val half = min(width, height) / 2f
-        val r = half * 0.64f
+        val r = if (px) max(grid, PixelMode.snap(half * 0.64f, grid)) else half * 0.64f
+        val sw = if (px) 2 * grid else 3.5f * d
         if (chosen) {
             p.style = Paint.Style.FILL
             p.shader = null
             p.color = colour
-            c.drawCircle(cx, cy, r - 3.5f * d, p)
+            c.drawDisc(px, cx, cy, r - sw, p)
         }
         p.style = Paint.Style.STROKE
-        p.strokeWidth = 3.5f * d
+        p.strokeWidth = sw
         p.shader = sweep
-        c.drawCircle(cx, cy, r - 1.75f * d, p)
+        c.drawDisc(px, cx, cy, r - sw / 2f, p)
         p.shader = null
         if (chosen) {
-            p.strokeWidth = 2 * d
+            p.strokeWidth = if (px) grid else 2 * d
             p.color = ring
-            c.drawCircle(cx, cy, half * 0.86f, p)
+            c.drawDisc(px, cx, cy, if (px) r + 2 * grid else half * 0.86f, p)
         }
     }
 }

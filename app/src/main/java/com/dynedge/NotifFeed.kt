@@ -65,6 +65,21 @@ object NotifFeed {
         }
     }
 
+    private val labels = HashMap<String, String>()
+
+    /** Cached app name for a package (falls back to the package's last segment). */
+    fun appLabel(ctx: Context, pkg: String): String {
+        synchronized(labels) { labels[pkg]?.let { return it } }
+        val l = try {
+            val pm = ctx.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        } catch (e: Exception) {
+            pkg.substringAfterLast('.')
+        }
+        synchronized(labels) { labels[pkg] = l }
+        return l
+    }
+
     private val iconIo = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "edge-icons").apply { isDaemon = true }
     }

@@ -86,6 +86,7 @@ class MainActivity : Activity() {
         val s = Studio(this)
         studio = s
         setContentView(s.root)
+        PixelMode.apply(this)
     }
 
     // ---------------------------------------------------------------- lifecycle

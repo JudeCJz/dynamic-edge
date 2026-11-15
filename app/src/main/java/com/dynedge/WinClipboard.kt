@@ -15,6 +15,7 @@ import kotlin.math.sin
 internal class WinClipboard(h: EdgeView) : Win(h, "clipboard", 5) {
 
     private val clipPaint = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = h.face(android.graphics.Typeface.DEFAULT)
         color = Color.WHITE
         textSize = h.sp(13f)
     }
@@ -41,7 +42,7 @@ internal class WinClipboard(h: EdgeView) : Win(h, "clipboard", 5) {
         maxRows = Prefs.rows(h.context, Prefs.KEY_CLIP_ROWS)
         for (k in 0 until 4) {
             rowR[k] = min(CLIP_F[k] * rad, rad - dp(24f))
-            arcPath(rowPath[k], rowR[k], CL_A0, CL_A1)
+            textArcPath(rowPath[k], rowR[k], CL_A0, CL_A1)
             rowLen[k] = rowR[k] * Math.toRadians((CL_A1 - CL_A0).toDouble()).toFloat()
         }
         rowHalf = min(dp(16f), (rowR[1] - rowR[0]) / 2f)
@@ -92,8 +93,9 @@ internal class WinClipboard(h: EdgeView) : Win(h, "clipboard", 5) {
             val ic = h.icon(R.drawable.ic_clipboard, false)
             ic.bounds = emptyRect
             ic.alpha = (255f * 0.32f * a + 0.5f).toInt()
-            ic.draw(c)
+            h.drawIc(c, ic)
         } else {
+            clipPaint.color = h.ink
             clipPaint.alpha = ai
             val ap = h.arcPaint
             val lp = h.linePaint
@@ -102,8 +104,8 @@ internal class WinClipboard(h: EdgeView) : Win(h, "clipboard", 5) {
                 if (isPressed(k)) {
                     val rr = r + dp(5f)
                     h.ovalScratch.set(-rr, -rr, rr, rr)
-                    ap.strokeWidth = rowHalf * 2f
-                    ap.color = Color.WHITE
+                    ap.strokeWidth = h.sw(rowHalf * 2f)
+                    ap.color = h.ink
                     ap.alpha = (255f * 0.10f * a + 0.5f).toInt()
                     c.drawArc(h.ovalScratch, 180f + CL_A0 - 2f, CL_A1 - CL_A0 + 4f, false, ap)
                 }
@@ -113,15 +115,15 @@ internal class WinClipboard(h: EdgeView) : Win(h, "clipboard", 5) {
                     val st = sin(ta).toFloat()
                     lp.color = h.accent
                     lp.alpha = ai
-                    lp.strokeWidth = dp(2.2f)
+                    lp.strokeWidth = h.sw(dp(2.2f))
                     c.drawLine(-(r - dp(3f)) * ct, -(r - dp(3f)) * st, -(r + dp(13f)) * ct, -(r + dp(13f)) * st, lp)
                 }
-                c.drawTextOnPath(clipShown[k], rowPath[k], 0f, 0f, clipPaint)
+                h.arcText(c, clipShown[k], rowPath[k], 0f, clipPaint)
             }
         }
         // "more" badge: opens the floating clipboard popup
-        drawBtn(c, MORE, EdgeView.C_FILL, 0, false, a, a)
-        h.fillP.color = Color.WHITE
+        drawBtn(c, MORE, h.cFill, 0, false, a, a)
+        h.fillP.color = h.ink
         h.fillP.alpha = ai
         val mx = cx[MORE]
         val my = cy[MORE]

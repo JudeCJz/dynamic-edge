@@ -124,6 +124,9 @@ internal abstract class Win(@JvmField protected val h: EdgeView, val id: String,
 
     protected fun arcPath(p: Path, r: Float, a0: Float, a1: Float) = Geo.arcPath(p, bandOval, r, a0, a1)
 
+    /** Like [arcPath] but for text drawn with [EdgeView.arcText] (reversed and mirrored when the edge is on the left). */
+    protected fun textArcPath(p: Path, r: Float, a0: Float, a1: Float) = Geo.textArcPath(p, bandOval, r, a0, a1)
+
     /** Round button: optional fill disc, press ring and icon. */
     protected fun drawBtn(c: Canvas, i: Int, fillColor: Int, res: Int, black: Boolean, a: Float, ba: Float) {
         val x = cx[i]
@@ -141,7 +144,7 @@ internal abstract class Win(@JvmField protected val h: EdgeView, val id: String,
         }
         if (ps) {
             // clear pressed state: a translucent white wash over the button plus the accent ring
-            h.fillP.color = Color.WHITE
+            h.fillP.color = h.ink
             h.fillP.alpha = (255f * 0.16f * ba + 0.5f).toInt()
             c.drawCircle(x, y, ir[i], h.fillP)
             h.ringPaint.alpha = (255f * a + 0.5f).toInt()
@@ -151,7 +154,7 @@ internal abstract class Win(@JvmField protected val h: EdgeView, val id: String,
             val ic = h.icon(res, black)
             ic.bounds = iconRect[i]
             ic.alpha = ai
-            ic.draw(c)
+            h.drawIc(c, ic)
         }
         if (ps) c.restore()
     }
@@ -172,6 +175,24 @@ internal abstract class Win(@JvmField protected val h: EdgeView, val id: String,
  * angles are degrees measured from the bottom edge toward the right edge (0..90 inside the panel).
  */
 internal object Geo {
+    /** True while the edge sits on the left side: the whole canvas is mirrored, text and icons are un-mirrored locally. */
+    @JvmField var mirror = false
+
+    /**
+     * Arc path for text. Normal: the same as [arcPath] (runs from [a0] to [a1], clockwise on screen). Mirrored: built in
+     * the un-mirrored frame (the text helpers cancel the canvas mirror) and reversed, so the text still reads
+     * left to right and upright along the mirrored arc.
+     */
+    fun textArcPath(p: Path, oval: RectF, r: Float, a0: Float, a1: Float) {
+        if (!mirror) {
+            arcPath(p, oval, r, a0, a1)
+            return
+        }
+        oval.set(-r, -r, r, r)
+        p.rewind()
+        p.arcTo(oval, -a1, a1 - a0, true)
+    }
+
     fun radius(lx: Float, ly: Float): Float = kotlin.math.sqrt(lx * lx + ly * ly)
 
     fun angle(lx: Float, ly: Float): Float =

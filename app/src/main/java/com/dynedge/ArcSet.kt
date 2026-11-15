@@ -59,7 +59,7 @@ internal class ArcSet(
     private val autoPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
         textAlign = Paint.Align.CENTER
-        typeface = Typeface.DEFAULT_BOLD
+        typeface = h.face(Typeface.DEFAULT_BOLD)
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 9f, h.resources.displayMetrics)
     }
     private val refreshRunnable = Runnable {
@@ -88,24 +88,27 @@ internal class ArcSet(
      * on ONE line: the same start angle (and so the same mirrored end angle), with all badges centred on one
      * radial line at that angle, just clear of the bottom edge.
      */
-    fun layout(radii: FloatArray) {
+    fun layout(radii: FloatArray, edgeA: Float = -1f) {
         val sunR = badgeR
         tol = h.dp(14f)
         var rmin = Float.MAX_VALUE
         for (k in 0 until n) rmin = min(rmin, radii[k])
         if (n == 0) return
-        val badgeA = Math.toDegrees(asin(((sunR + h.dp(4f)) / rmin).toDouble().coerceAtMost(1.0))).toFloat()
+        // [edgeA] >= 0 (QUICK): the badge sits on the first tile's radial line and the arc ends on the last tile's,
+        // so the slider spans exactly the same angles as the tile rings (symmetric about the 45 degree diagonal)
+        val badgeMin = Math.toDegrees(asin(((sunR + h.dp(4f)) / rmin).toDouble().coerceAtMost(1.0))).toFloat()
+        val badgeA = if (edgeA >= 0f) max(badgeMin, edgeA) else badgeMin
         val sunHalf = Math.toDegrees(asin((sunR / rmin).toDouble().coerceAtMost(1.0))).toFloat()
         // the round cap reaches half a stroke past the arc's start: keep it clear of the badge too
         val capHalf = Math.toDegrees(asin((h.dp(STROKE_DP) / 2f / rmin).toDouble().coerceAtMost(1.0))).toFloat()
         val start = badgeA + sunHalf + 2f + capHalf
         val ba = Math.toRadians(badgeA.toDouble())
         for (k in 0 until n) {
-            val rr = radii[k]
+            val rr = h.sr(radii[k])
             r[k] = rr
             oval[k].set(-rr, -rr, rr, rr)
             a0[k] = start
-            a1[k] = Win.mirror(start)
+            a1[k] = if (edgeA >= 0f) Win.mirror(badgeA) else Win.mirror(start)
             bx[k] = -rr * cos(ba).toFloat()
             by[k] = -rr * sin(ba).toFloat()
             val sh = (sunR * 0.6f).toInt()
@@ -149,8 +152,8 @@ internal class ArcSet(
                 if (g != tg) moving = true
             }
             val e = g * g * (3f - 2f * g)
-            p.strokeWidth = h.dp(REST_DP + (STROKE_DP - REST_DP) * e)
-            p.color = EdgeView.C_TRACK
+            p.strokeWidth = h.sw(h.dp(REST_DP + (STROKE_DP - REST_DP) * e))
+            p.color = h.cTrack
             p.alpha = ai
             c.drawArc(oval[k], 180f + a0[k], a1[k] - a0[k], false, p)
             val lv = level[k].coerceIn(0f, 1f)
@@ -174,7 +177,7 @@ internal class ArcSet(
             c.scale(EdgeView.PRESS_SCALE, EdgeView.PRESS_SCALE, x, y)
         }
         val on = act[k]
-        h.fillP.color = if (on) accent else EdgeView.C_FILL
+        h.fillP.color = if (on) accent else h.cFill
         h.fillP.alpha = ai
         c.drawCircle(x, y, badgeR, h.fillP)
         if (ps) {
@@ -185,12 +188,12 @@ internal class ArcSet(
             val ic = h.icon(icon[k], on)
             ic.bounds = iconRect[k]
             ic.alpha = ai
-            ic.draw(c)
+            h.drawIc(c, ic)
         }
         if (ps) c.restore()
         if (on && bright[k]) {
             autoPaint.alpha = ai
-            c.drawText("A", x + h.dp(6f), y + h.dp(11f), autoPaint)
+            h.text(c, "A", x + h.dp(6f), y + h.dp(11f), autoPaint)
         }
     }
 

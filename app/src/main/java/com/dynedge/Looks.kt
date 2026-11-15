@@ -27,6 +27,20 @@ internal class Looks {
 
     var accent = Color.WHITE
 
+    /** Pixel mode: the whole-pixel cell strokes and radii snap to (0 = off). */
+    var cell = 0f
+
+    private fun sn(v: Float): Float = if (cell > 0f) max(cell, Math.round(v / cell) * cell) else v
+
+    /** The body ink colour (white on a dark body, black on a light one); set by EdgeView. */
+    var ink = Color.WHITE
+        set(v) {
+            if (field != v) {
+                field = v
+                patUnit = -1f
+            }
+        }
+
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF()
     private val scratch = Path()
@@ -46,7 +60,7 @@ internal class Looks {
     private fun stroke(w: Float, cap: Paint.Cap = Paint.Cap.ROUND) {
         p.style = Paint.Style.STROKE
         p.strokeCap = cap
-        p.strokeWidth = max(1f, w)
+        p.strokeWidth = sn(max(1f, w))
     }
 
     private fun fillStyle() {
@@ -79,7 +93,7 @@ internal class Looks {
                     val a = 35f + 10f * i
                     val mid = i == 1
                     stroke(1.8f * k * (if (mid) 1f + 0.25f * beat else 1f))
-                    if (mid) paint(accent, ia) else paint(Color.WHITE, (0.9f + 0.1f * beat) * ia)
+                    if (mid) paint(accent, ia) else paint(ink, (0.9f + 0.1f * beat) * ia)
                     radial(c, r - 5f * k, r, a)
                 }
             }
@@ -90,7 +104,7 @@ internal class Looks {
                     val r = s * (0.20f + 0.13f * i)
                     stroke(1.6f * k)
                     val a = (0.85f - 0.18f * i + (if (i == 2) 0.25f * beat else 0f)) * ia
-                    if (i == 0) paint(accent, a) else paint(Color.WHITE, a)
+                    if (i == 0) paint(accent, a) else paint(ink, a)
                     arc(c, r, 22f, 68f)
                 }
             }
@@ -99,11 +113,11 @@ internal class Looks {
                 val k = s / 48f
                 val r = 0.40f * s
                 stroke(1.5f * k)
-                paint(Color.WHITE, 0.5f * ia)
+                paint(ink, 0.5f * ia)
                 arc(c, r, 12f, 78f)
                 fillStyle()
                 paint(accent, (0.9f + 0.1f * beat) * ia)
-                c.drawCircle(px(r, 45f), py(r, 45f), 2.6f * k, p)
+                c.drawCircle(px(r, 45f), py(r, 45f), sn(2.6f * k), p)
             }
             else -> {
                 // a dot art has its own id (art_dotclock, art_dotviz, art_glyphpulse, art_dotbattery):
@@ -127,7 +141,7 @@ internal class Looks {
         val sh = dotsShader ?: return
         fillStyle()
         p.shader = sh
-        paint(Color.WHITE, 0.07f * boost * (1f + 0.9f * b))
+        paint(ink, 0.07f * boost * (1f + 0.9f * b))
         c.drawRect(-extent, -extent, 0f, 0f, p)
         if (b > 0.03f) {
             paint(accent, 0.1f * boost * b)
@@ -144,7 +158,7 @@ internal class Looks {
         val d = Bitmap.createBitmap(t, t, Bitmap.Config.ALPHA_8)
         val dc = Canvas(d)
         val dp = Paint(Paint.ANTI_ALIAS_FLAG)
-        dp.color = Color.WHITE
+        dp.color = ink
         dc.drawCircle(t / 2f, t / 2f, max(0.8f, 0.6f * unit), dp)
         dotsBmp = d
         dotsShader = BitmapShader(d, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
@@ -175,7 +189,7 @@ internal class Looks {
                 stroke(2.5f * k)
                 for (i in 0 until 4) {
                     val h = minH + (maxH - minH) * lv[i]
-                    paint(if (i == 2) accent else Color.WHITE, 0.85f * ia)
+                    paint(if (i == 2) accent else ink, 0.85f * ia)
                     radial(c, rc - h / 2f, rc + h / 2f, 29f + i * 10.7f)
                 }
             }
@@ -188,7 +202,7 @@ internal class Looks {
                     val b = band(lv, i / (n - 1f))
                     val a = if (open) 10f + i * 3.3f else 12f + i * 5.5f + 1.9f
                     val half = (1.5f + amp * b) * k / 2f
-                    paint(if (b > 0.7f) accent else Color.WHITE, (if (open) 0.6f else 0.8f) * ia)
+                    paint(if (b > 0.7f) accent else ink, (if (open) 0.6f else 0.8f) * ia)
                     radial(c, rimR - half, rimR + half, a)
                 }
             }
@@ -197,7 +211,7 @@ internal class Looks {
                 for (i in 0 until 8) {
                     val a = 18f + i * 7.7f
                     val b = lv[i % 4]
-                    paint(if (i % 2 == 0) accent else Color.WHITE, 0.9f * ia)
+                    paint(if (i % 2 == 0) accent else ink, 0.9f * ia)
                     radial(c, 0.3f * s, 0.3f * s + (0.08f + 0.3f * b) * s, a)
                 }
             }
@@ -222,7 +236,7 @@ internal class Looks {
                 // 1.2 dp dots so neighbours never touch (outer edge ~0.77 s, inside the bean).
                 val nCols = 8
                 val nRows = 5
-                val dotRadius = 1.2f * k
+                val dotRadius = if (cell > 0f) cell / 2f else 1.2f * k
                 val baseR = 0.48f * s
                 val stepR = 3.2f * k
                 fillStyle()
@@ -236,9 +250,9 @@ internal class Looks {
                     for (rIdx in 0 until nRows) {
                         val r = baseR + rIdx * stepR
                         if (rIdx < lit) {
-                            paint(if (rIdx == lit - 1 && b > 0.8f) accent else Color.WHITE, 0.9f * ia)
+                            paint(if (rIdx == lit - 1 && b > 0.8f) accent else ink, 0.9f * ia)
                         } else {
-                            paint(Color.WHITE, 0.25f * ia)
+                            paint(ink, 0.25f * ia)
                         }
                         c.drawCircle(x * r, y * r, dotRadius, p)
                     }

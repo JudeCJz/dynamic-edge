@@ -46,7 +46,9 @@ import kotlin.math.sin
  *   outside the quarter circle (tray, anywhere else) removes it.
  * - The tray below (search, filter) lists the tiles that are not placed: tap = first free slot, long-press = drag it
  *   into any slot. Sliders are toggled in the tray and selected / swapped / removed on the preview.
- * - Tap a placed tile = select: the row under the preview shows its support reason (red marker tiles), Grant and Remove.
+ * - Tap a placed tile = select: the row under the preview shows its support reason (placed tiles this phone cannot run keep a red marker), Grant and Remove.
+ * - The tray offers only tiles that can work here ([TileSupport.usable]), in headed groups: My tiles, Connections,
+ *   Sound and display, Tools, App tiles.
  * - Every change is saved at once (the overlay reloads live through the prefs listener); Undo steps back.
  */
 class QuickEditorActivity : Activity() {
@@ -60,6 +62,8 @@ class QuickEditorActivity : Activity() {
     private var rings: Array<Array<String?>> = arrayOf(arrayOfNulls(0), arrayOfNulls(0))
     private val arcs = ArrayList<String>(2)
     private val undo = ArrayList<QuickConfig.Layout>()
+    /** Shortcut tiles removed this session (data deleted), kept so Undo can restore them. */
+    private val removed = HashMap<String, ShortcutStore.Shortcut>()
 
     private lateinit var preview: PreviewView
     private lateinit var tray: LinearLayout
@@ -72,7 +76,6 @@ class QuickEditorActivity : Activity() {
         window.navigationBarColor = Skin.BG
         window.setDecorFitsSystemWindows(false)
         accent = Skin.accentUi(Prefs.accent(this))
-        hideBad = Prefs.prefs(this).getBoolean(KEY_HIDE_BAD, false)
         readModel()
 
         val root = LinearLayout(this).apply {
@@ -146,6 +149,7 @@ class QuickEditorActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         setContentView(root)
+        PixelMode.apply(this)
         buildTray()
         updateUndo()
     }
@@ -155,6 +159,7 @@ class QuickEditorActivity : Activity() {
         // a permission granted from the selection row (or QS edited) changes the markers
         if (resumedOnce) {
             support.clear()
+            usableCache.clear()
             buildTray()
             preview.invalidate()
             showSel()
@@ -186,6 +191,10 @@ class QuickEditorActivity : Activity() {
     private fun apply(l: QuickConfig.Layout) {
         val g = QuickGeom.forPrefs(this, l.arcs.size)
         val n = QuickConfig.normalize(l, g.cap)
+        // Undo of a removed shortcut tile: bring its data back
+        for (id in n.tiles()) if (ShortcutStore.isId(id) && ShortcutStore.get(this, id) == null) {
+            removed[id]?.let { ShortcutStore.put(this, it) }
+        }
         geom = g
         arcs.clear()
         arcs.addAll(n.arcs)
@@ -234,6 +243,7 @@ class QuickEditorActivity : Activity() {
     }
 
     private fun remove(id: String) {
+        if (ShortcutStore.isId(id)) ShortcutStore.delete(this, id)?.let { removed[id] = it }
         val next = copyRings()
         for (r in 0..1) for (k in next[r].indices) if (next[r][k] == id) next[r][k] = null
         commit(next)
@@ -280,7 +290,10 @@ class QuickEditorActivity : Activity() {
 
     private var resumedOnce = false
     private val support = HashMap<String, TileSupport.Support>()
-    private var hideBad = false
+    private val usableCache = HashMap<String, Boolean>()
+
+    /** Can the tile work on this phone? Unusable ones are not offered in the tray. */
+    private fun usable(id: String): Boolean = usableCache.getOrPut(id) { TileSupport.usable(this, id) }
 
     private fun sup(id: String): TileSupport.Support = support.getOrPut(id) { TileSupport.support(this, id) }
 
@@ -335,6 +348,7 @@ class QuickEditorActivity : Activity() {
     private fun showSel(note: String? = null, warn: Boolean = false) {
         val s = selId
         selGrant.visibility = View.GONE
+        selGrant.text = "Grant"
         selSwap.visibility = View.GONE
         selRemove.visibility = View.GONE
         selIcon.visibility = View.INVISIBLE
@@ -361,18 +375,29 @@ class QuickEditorActivity : Activity() {
             selRemove.visibility = View.VISIBLE
             return
         }
+        if (ShortcutStore.isId(s)) {
+            selText.setTextColor(Skin.TEXT)
+            selText.text = ShortcutStore.get(this, s)?.let { it.label + ": " + it.target } ?: "Shortcut"
+            selRemove.visibility = if (placed(s)) View.VISIBLE else View.GONE
+            selGrant.text = "Edit"
+            selGrant.visibility = View.VISIBLE
+            val edit = View.OnClickListener { openPicker(s) }
+            selGrant.setOnClickListener(edit)
+            selRow.setOnClickListener(edit)
+            return
+        }
         val sp = sup(s)
         selRemove.visibility = if (placed(s)) View.VISIBLE else View.GONE
         if (sp.ok) {
             selText.setTextColor(Skin.TEXT)
-            selText.text = Tiles.label(s)
+            selText.text = tileLabel(s)
             return
         }
         selIcon.setImageResource(R.drawable.ic_alert_circle)
         selIcon.setColorFilter(BAD_RED)
         selIcon.visibility = View.VISIBLE
         selText.setTextColor(Skin.TEXT)
-        selText.text = Tiles.label(s) + ": " + sp.reason()
+        selText.text = tileLabel(s) + ": " + sp.reason()
         val need = (sp as? TileSupport.Support.NeedsPermission)?.which
         val fix = need?.let { TileSupport.intent(this, it) }
         if (fix != null) {
@@ -394,13 +419,40 @@ class QuickEditorActivity : Activity() {
         showSel()
     }
 
+    // ---------------------------------------------------------------- shortcut tiles
+
+    /** Opens the shortcut picker: a new shortcut ([id] null) or editing [id]. The result comes back in onActivityResult. */
+    private fun openPicker(id: String?) {
+        startActivityForResult(ShortcutPickerActivity.intent(this, id), REQ_SHORTCUT)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_SHORTCUT || resultCode != RESULT_OK) return
+        val id = data?.getStringExtra(ShortcutPickerActivity.EXTRA_ID) ?: return
+        iconCache.remove(id)
+        if (placed(id)) {
+            afterChange()
+        } else {
+            addToFree(id) // no free slot: it stays in the tray
+            buildTray()
+        }
+    }
+
     // ---------------------------------------------------------------- icons
 
     private val iconCache = HashMap<String, Drawable?>()
 
+    private fun tileLabel(id: String): String = if (ShortcutStore.isId(id)) ShortcutStore.label(this, id) else Tiles.label(id)
+
     /** The tile's glyph: the phone's SystemUI icon, the third-party tile icon, else the Lucide icon (white). */
     private fun tileIcon(id: String): Drawable? = iconCache.getOrPut(id) {
-        if (QsCatalog.isCustom(id)) {
+        if (ShortcutStore.isId(id)) {
+            val bmp = ShortcutStore.appBitmap(this, id, dp(48))
+            if (bmp != null) BitmapDrawable(resources, bmp)
+            else getDrawable(ShortcutStore.iconRes(this, id))?.mutate()?.apply { setTint(Color.WHITE) }
+        } else if (QsCatalog.isCustom(id)) {
             QsCatalog.entry(this, id)?.let { QsCatalog.drawable(this, it) } ?: getDrawable(R.drawable.ic_tile)?.mutate()?.apply { setTint(Color.WHITE) }
         } else {
             val bmp = try { TileIcons.system(this, id, false, dp(24)) } catch (e: Exception) { null }
@@ -469,7 +521,7 @@ class QuickEditorActivity : Activity() {
         tray.addView(sectionLabel(text).apply { setPadding(dp(8), dp(18), 0, dp(6)) })
     }
 
-    private fun cell(t: Item, active: Boolean, bad: Boolean): View {
+    private fun cell(t: Item, active: Boolean): View {
         val c = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -490,17 +542,22 @@ class QuickEditorActivity : Activity() {
         }
         val f = FrameLayout(this)
         f.addView(img, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER))
-        if (bad) {
-            // red alert badge on the chip's top-right edge: this tile only opens a settings screen
+        if (ShortcutStore.isId(t.id)) {
+            // my tiles: a small X deletes the shortcut (it is not placed, so nothing else refers to it)
             f.addView(ImageView(this).apply {
-                setImageResource(R.drawable.ic_alert_circle)
-                setColorFilter(BAD_RED)
-                setPadding(dp(1), dp(1), dp(1), dp(1))
+                setImageDrawable(getDrawable(R.drawable.ic_x)?.mutate()?.apply { setTint(Color.WHITE) })
+                setPadding(dp(3), dp(3), dp(3), dp(3))
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Skin.BG)
+                    setColor(0xFFE5484D.toInt())
                 }
-                contentDescription = "Will not work by itself"
+                contentDescription = "Delete ${t.label}"
+                setOnClickListener {
+                    confirmDialog("Delete \"${t.label}\"?", "This shortcut tile is removed.", "Delete") {
+                        ShortcutStore.delete(this@QuickEditorActivity, t.id)
+                        buildTray()
+                    }
+                }
             }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.TOP or Gravity.END))
         }
         c.addView(f, LinearLayout.LayoutParams(dp(52), dp(50)))
@@ -518,26 +575,27 @@ class QuickEditorActivity : Activity() {
                 else if (arcs.size < QuickConfig.ARCS_MAX) commit(copyRings(), arcs + t.id)
                 else showSel("Two sliders at most - remove one on the preview first")
             }
+        } else if (t.id == NEW_ID) {
+            c.setOnClickListener { openPicker(null) }
         } else {
             c.setOnClickListener {
                 addToFree(t.id)
-                if (bad) {
-                    selId = t.id
-                    showSel()
-                    preview.invalidate()
-                }
             }
             c.setOnLongClickListener { startTileDrag(it, t.id, -1, -1) }
         }
         return c
     }
 
-    private fun grid(all: List<Item>) {
+    /** A heading and its grid; nothing when no tile passes the search. [always] keeps the section (My tiles). */
+    private fun section(title: String, all: List<Item>, always: Boolean = false) {
+        val items = all.filter { t -> t.id == NEW_ID || query.isEmpty() || t.label.contains(query, ignoreCase = true) }
+        if (items.isEmpty() && !always) return
+        header(title)
+        grid(items)
+    }
+
+    private fun grid(items: List<Item>) {
         val cols = 4
-        val items = all.filter { t ->
-            (query.isEmpty() || t.label.contains(query, ignoreCase = true)) &&
-                (t.arc || !hideBad || sup(t.id).ok)
-        }
         if (items.isEmpty()) return
         var row: LinearLayout? = null
         for ((i, t) in items.withIndex()) {
@@ -545,60 +603,71 @@ class QuickEditorActivity : Activity() {
                 row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                 tray.addView(row)
             }
-            val bad = !t.arc && !sup(t.id).ok
-            row!!.addView(cell(t, t.arc && t.id in arcs, bad), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row!!.addView(cell(t, t.arc && t.id in arcs), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
         val rem = items.size % cols
         if (rem != 0) for (k in rem until cols) row!!.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
     }
 
-    /** "Hide tiles that won't work": only when such tiles are in the tray. */
-    private fun filterRow() {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(48)
-            setPadding(dp(8), 0, dp(8), 0)
-            isClickable = true
-            background = Skin.ripple(this@QuickEditorActivity)
-            setOnClickListener {
-                hideBad = !hideBad
-                Prefs.prefs(this@QuickEditorActivity).edit().putBoolean(KEY_HIDE_BAD, hideBad).apply()
-                buildTray()
-            }
+    private fun group(id: String): Int {
+        val key = if (id.startsWith(QsCatalog.SYS)) id.removePrefix(QsCatalog.SYS) else id
+        return when (key) {
+            "wifi", "bluetooth", "cell", "airplane", "hotspot", "nfc", "location", "cast", "upnp_server", "vivo_share",
+            "dataSaver", "saver", "internet", "bt" -> 0
+            "dnd", "vibrate", "rotate", "ringer", "silent_mode", "dark", "night", "reduce_brightness", "inversion",
+            "color_correction", "dream", "font_scaling" -> 1
+            else -> 2
         }
-        row.addView(icon(R.drawable.ic_alert_circle, BAD_RED, 18), LinearLayout.LayoutParams(dp(18), dp(18)).apply { rightMargin = dp(12) })
-        row.addView(txt("Hide tiles that won't work", 14f, Skin.TEXT_2, false), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(icon(R.drawable.ic_check, if (hideBad) accent else Skin.TRACK, 20), LinearLayout.LayoutParams(dp(20), dp(20)))
-        tray.addView(row, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     /** False until the first tray build: then the phone's tile lists are re-read (new tiles / apps). */
     private var catalogFresh = false
 
+    /** Ring radius slider (percent, 100 = default). Refits the slots and redraws the preview live. */
+    private fun ringSlider(caption: String, key: String, max: Float): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
+            setPadding(dp(8), 0, dp(4), 0)
+        }
+        row.addView(icon(R.drawable.ic_ring, Skin.TEXT_2, 20), LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(14) })
+        row.addView(txt(caption, 15f, Skin.TEXT, false), LinearLayout.LayoutParams(dp(104), ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.addView(FlatSlider(this).apply {
+            min = Prefs.RING_MIN
+            this.max = max
+            tick = Prefs.RING_DEF
+            value = Prefs.ringPct(this@QuickEditorActivity, key, max)
+            accent = this@QuickEditorActivity.accent
+            contentDescription = caption
+            onChange = {
+                Prefs.prefs(this@QuickEditorActivity).edit().putFloat(key, it).apply()
+                this@QuickEditorActivity.apply(snapshot())
+                preview.invalidate()
+            }
+            onStop = { afterChange() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        return row
+    }
+
     private fun buildTray() {
         tray.removeAllViews()
         val force = !catalogFresh
         catalogFresh = true
-        val native = Tiles.ALL.filter { !placed(it) }.map { Item(it, tileIcon(it), Tiles.label(it)) }
-        val sys = QsCatalog.systems(this, force).filter { !placed(it.id) }.map { Item(it.id, tileIcon(it.id), it.label) }
-        val cus = QsCatalog.customs(this, force).filter { !placed(it.id) }.map { Item(it.id, tileIcon(it.id), it.label) }
-        val anyBad = (native + sys + cus).any { !sup(it.id).ok }
-        if (native.isNotEmpty()) {
-            header("Tiles")
-            grid(native)
-        }
-        if (sys.isNotEmpty()) {
-            header("System")
-            grid(sys)
-        }
-        if (cus.isNotEmpty()) {
-            header("Custom")
-            grid(cus)
-        }
+        val builtIn = (Tiles.ALL.filter { !placed(it) && usable(it) }.map { Item(it, tileIcon(it), tileLabel(it)) } +
+            QsCatalog.systems(this, force).filter { !placed(it.id) && usable(it.id) }.map { Item(it.id, tileIcon(it.id), it.label) })
+        val cus = QsCatalog.customs(this, force).filter { !placed(it.id) && usable(it.id) }.map { Item(it.id, tileIcon(it.id), it.label) }
+        val shortcuts = ShortcutStore.all(this).filter { !placed(it.id) }.map { Item(it.id, tileIcon(it.id), it.label) }
+        section("My tiles", listOf(Item(NEW_ID, getDrawable(R.drawable.ic_plus)?.mutate()?.apply { setTint(Color.WHITE) }, "New shortcut")) + shortcuts, always = true)
+        section("Connections", builtIn.filter { group(it.id) == 0 })
+        section("Sound and display", builtIn.filter { group(it.id) == 1 })
+        section("Tools", builtIn.filter { group(it.id) == 2 })
+        section("App tiles", cus)
         header("Sliders")
-        grid(Arcs.ALL.map { Item(it, null, Arcs.label(it), true) })
-        if (anyBad) filterRow()
+        grid(Arcs.ALL.map { Item(it, null, Arcs.label(it), true) }.filter { query.isEmpty() || it.label.contains(query, ignoreCase = true) })
+        header("Rings")
+        tray.addView(ringSlider("Inner ring", Prefs.KEY_QUICK_RING_IN, Prefs.RING_IN_MAX))
+        tray.addView(ringSlider("Outer ring", Prefs.KEY_QUICK_RING_OUT, Prefs.RING_MAX))
     }
 
     // ---------------------------------------------------------------- preview
@@ -648,13 +717,13 @@ class QuickEditorActivity : Activity() {
         private fun slotX(r: Int, k: Int): Float {
             val n = geom.cap[r]
             val rr = min(geom.ringR(r), openR - 6f * d - geom.chip[r])
-            return cx - rr * cos(Math.toRadians(Win.slotAngle(k, n).toDouble())).toFloat()
+            return cx - rr * cos(Math.toRadians(geom.angle(r, k, n).toDouble())).toFloat()
         }
 
         private fun slotY(r: Int, k: Int): Float {
             val n = geom.cap[r]
             val rr = min(geom.ringR(r), openR - 6f * d - geom.chip[r])
-            return cy - rr * sin(Math.toRadians(Win.slotAngle(k, n).toDouble())).toFloat()
+            return cy - rr * sin(Math.toRadians(geom.angle(r, k, n).toDouble())).toFloat()
         }
 
         private fun badgeAngle(r: Float): Float =
@@ -902,7 +971,7 @@ class QuickEditorActivity : Activity() {
                 if (dragFr >= 0) copyRings().also { it[dragFr][dragFk] = null } else null
             } else arrange(id, dragFr, dragFk, br, bk)
             if (dragFr >= 0) {
-                if (out) showSel("Release to remove " + Tiles.label(id), warn = true)
+                if (out) showSel("Release to remove " + tileLabel(id), warn = true)
                 else showSel("Drop on any slot. Drop outside the panel to remove.")
             }
             performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -920,7 +989,7 @@ class QuickEditorActivity : Activity() {
                         hovR = -1
                         hovK = -1
                         hypo = if (dragFr >= 0) copyRings().also { it[dragFr][dragFk] = null } else null
-                        if (dragFr >= 0) showSel("Release to remove " + Tiles.label(info.id), warn = true)
+                        if (dragFr >= 0) showSel("Release to remove " + tileLabel(info.id), warn = true)
                         invalidate()
                     }
                 }
@@ -974,8 +1043,9 @@ class QuickEditorActivity : Activity() {
     }
 
     companion object {
-        private const val KEY_HIDE_BAD = "qe_hide_bad"
         private const val ARC_SEL = "arc:"
+        private const val NEW_ID = "new:shortcut"
+        private const val REQ_SHORTCUT = 41
         /** Marker red for tiles that will not work by themselves. */
         private const val BAD_RED = 0xFFFF453A.toInt()
     }

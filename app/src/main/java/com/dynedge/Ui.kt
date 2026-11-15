@@ -37,7 +37,7 @@ fun Context.txt(s: String, sp: Float, color: Int, bold: Boolean = false): TextVi
     text = s
     setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
     setTextColor(color)
-    typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    typeface = PixelMode.typeface(this@txt) ?: if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
 }
 
 fun Context.icon(res: Int, color: Int, sizeDp: Int = 24): ImageView = ImageView(this).apply {
@@ -93,35 +93,39 @@ fun Context.topBar(title: String, onBack: (() -> Unit)?): View {
 
 /** A round colour swatch. [selected] adds a ring around it. */
 class Swatch(ctx: Context, var colour: Int, var chosen: Boolean, var ring: Int) : View(ctx) {
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val px = PixelMode.on(ctx)
+    private val grid = if (px) PixelMode.gridPx(ctx) else 0f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !px }
     private val d = resources.displayMetrics.density
 
     override fun onDraw(c: Canvas) {
         val cx = width / 2f
         val cy = height / 2f
         val half = minOf(width, height) / 2f
-        val r = half * 0.64f
+        var r = half * 0.64f
+        if (px) r = maxOf(grid, PixelMode.snap(r, grid))
         p.style = Paint.Style.FILL
         p.color = colour
-        c.drawCircle(cx, cy, r, p)
+        c.drawDisc(px, cx, cy, r, p)
         p.style = Paint.Style.STROKE
-        p.strokeWidth = d
+        p.strokeWidth = if (px) grid else d
         p.color = 0x44FFFFFF
-        c.drawCircle(cx, cy, r, p)
+        c.drawDisc(px, cx, cy, r, p)
         if (chosen) {
-            p.strokeWidth = 2 * d
+            p.strokeWidth = if (px) grid else 2 * d
             p.color = ring
-            c.drawCircle(cx, cy, half * 0.86f, p)
+            c.drawDisc(px, cx, cy, if (px) r + 2 * grid else half * 0.86f, p)
         }
     }
 }
 
 // ---------------------------------------------------------------- dialogs
 
-private fun AlertDialog.flat(accent: Int) {
+fun AlertDialog.flat(accent: Int) {
     window?.setBackgroundDrawable(ColorDrawable(Skin.BG))
     getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(accent)
     getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(Skin.TEXT_2)
+    window?.decorView?.let { PixelMode.applyTo(it) }
 }
 
 /** Ask before doing something destructive. */

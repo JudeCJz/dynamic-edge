@@ -168,15 +168,18 @@ internal class ClipPopup(
 
     private fun popupWidth(): Int = minOf(dp(300f), dm.widthPixels - dp(24f))
 
+    private fun sideGravity(): Int = if (Prefs.sideLeft(ctx)) Gravity.LEFT else Gravity.RIGHT
+
     private fun placeBottom(p: WindowManager.LayoutParams) {
-        p.gravity = Gravity.BOTTOM or Gravity.RIGHT
-        p.x = dp(12f)
-        p.y = dp(Prefs.idleDp(ctx) + 18f)
+        p.gravity = Gravity.BOTTOM or sideGravity()
+        // above the bean wherever it sits (side, float gap, position along the bottom edge), kept on screen
+        p.x = (EdgeView.placeXFor(ctx) + dp(12f)).coerceAtMost(dm.widthPixels - popupWidth() - dp(8f)).coerceAtLeast(dp(12f))
+        p.y = EdgeView.placeYFor(ctx) + dp(Prefs.idleDp(ctx) + 18f)
         maxH = (dm.heightPixels * 0.60f).toInt() - p.y / 2
     }
 
     private fun placeTop(p: WindowManager.LayoutParams) {
-        p.gravity = Gravity.TOP or Gravity.RIGHT
+        p.gravity = Gravity.TOP or sideGravity()
         p.x = dp(12f)
         p.y = dp(56f)
         maxH = (dm.heightPixels * 0.42f).toInt()

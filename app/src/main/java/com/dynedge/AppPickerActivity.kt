@@ -107,6 +107,7 @@ class AppPickerActivity : Activity() {
             addView(list, lp(MATCH, 0, 1f))
         }
         setContentView(root)
+        PixelMode.apply(this)
     }
 
     private fun searchBox(): View = EditText(this).apply {
@@ -164,7 +165,7 @@ class AppPickerActivity : Activity() {
             }
             if (bmp != null) cache.put(item.cn.flattenToShortString(), bmp)
         }
-        icon.setImageBitmap(bmp)
+        icon.setImageDrawable(IconTheme.drawable(this, bmp))
         if (multi) {
             val on = item.pkg in chosen
             check.visibility = if (on) View.VISIBLE else View.INVISIBLE

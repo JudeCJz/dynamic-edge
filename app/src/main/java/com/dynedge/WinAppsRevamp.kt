@@ -337,6 +337,7 @@ internal open class WinAppsRevamp(h: EdgeView) : Win(h, "apps", ITEMS) {
         val ps = isPressed(i)
         c.save()
         c.translate(cx[i], cy[i])
+        h.unflip(c)
         if (ps) c.scale(EdgeView.PRESS_SCALE, EdgeView.PRESS_SCALE)
         p.alpha = if (ps) ai else (ai * alpha + 0.5f).toInt()
         val cr = r * CORNER_F
@@ -357,14 +358,14 @@ internal open class WinAppsRevamp(h: EdgeView) : Win(h, "apps", ITEMS) {
         val y = cy[X_CELL + 1]
         val r = iconR
         val cr = r * CORNER_F
-        emptyPaint.color = EdgeView.C_TRACK
+        emptyPaint.color = h.cTrack
         emptyPaint.alpha = (ai * 0.55f + 0.5f).toInt()
         c.drawRoundRect(x - r, y - r, x + r, y + r, cr, cr, emptyPaint)
         val ic = h.icon(R.drawable.ic_plus, false)
         val g = (r * 0.45f).toInt().coerceAtLeast(2)
         ic.setBounds((x - g).toInt(), (y - g).toInt(), (x + g).toInt(), (y + g).toInt())
         ic.alpha = (ai * 0.7f + 0.5f).toInt()
-        ic.draw(c)
+        h.drawIc(c, ic)
     }
 
     // ---------------------------------------------------------------- touch

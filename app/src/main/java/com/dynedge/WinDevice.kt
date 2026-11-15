@@ -52,13 +52,15 @@ internal class WinDevice(h: EdgeView) : Win(h, "device", 1) {
     private val sb = StringBuilder(16)
     private val pctPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        typeface = h.face(Typeface.create("sans-serif-medium", Typeface.NORMAL))
     }
     private val tempPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = h.face(android.graphics.Typeface.DEFAULT)
         color = EdgeView.C_GREY
         textSize = h.sp(12f)
     }
     private val labelPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = h.face(android.graphics.Typeface.DEFAULT)
         color = EdgeView.C_GREY
         textSize = h.sp(10f)
     }
@@ -95,7 +97,7 @@ internal class WinDevice(h: EdgeView) : Win(h, "device", 1) {
             by[k] = -yBadge
             badgeRect[k].set((bx[k] - s).toInt(), (by[k] - s).toInt(), (bx[k] + s).toInt(), (by[k] + s).toInt())
             // labels sit just inside each track, after the icon
-            arcPath(labelPath[k], r[k] - dp(15f), a0[k] + 3f, a1[k] - 3f)
+            textArcPath(labelPath[k], r[k] - dp(15f), a0[k] + 3f, a1[k] - 3f)
         }
         // percentage and temperature follow the circle inside the innermost label, centred on the diagonal
         pctPaint.textSize = min(h.sp(30f), 0.14f * rad)
@@ -103,8 +105,8 @@ internal class WinDevice(h: EdgeView) : Win(h, "device", 1) {
         val capT = 0.72f * tempPaint.textSize
         val rp = max(r[2] - dp(15f) - dp(5f) - capP, dp(30f))
         val rt = max(rp - dp(8f) - capT, dp(14f))
-        arcPath(pctPath, rp, 8f, 82f)
-        arcPath(tempPath, rt, 8f, 82f)
+        textArcPath(pctPath, rp, 8f, 82f)
+        textArcPath(tempPath, rt, 8f, 82f)
         val span = Math.toRadians(74.0).toFloat()
         pctLen = rp * span
         tempLen = rt * span
@@ -148,23 +150,26 @@ internal class WinDevice(h: EdgeView) : Win(h, "device", 1) {
     override fun draw(c: Canvas, a: Float) {
         val ai = (255f * a + 0.5f).toInt()
         val ap = h.arcPaint
+        pctPaint.color = h.ink
+        tempPaint.color = h.cGrey
+        labelPaint.color = h.cGrey
         for (k in 0 until 3) {
             if (!showArc[k]) continue
-            ap.strokeWidth = dp(5f)
-            ap.color = EdgeView.C_TRACK
+            ap.strokeWidth = h.sw(dp(5f))
+            ap.color = h.cTrack
             ap.alpha = ai
             c.drawArc(oval[k], 180f + a0[k], a1[k] - a0[k], false, ap)
             val lv = frac[k].coerceIn(0f, 1f)
             if (lv > 0.001f) {
-                ap.color = if (k == 0) h.accent else Color.WHITE
+                ap.color = if (k == 0) h.accent else h.ink
                 ap.alpha = if (k == 0) ai else (255f * 0.85f * a + 0.5f).toInt()
                 c.drawArc(oval[k], 180f + a0[k], (a1[k] - a0[k]) * lv, false, ap)
             }
             labelPaint.alpha = ai
-            c.drawTextOnPath(label[k], labelPath[k], 0f, 0f, labelPaint)
+            h.arcText(c, label[k], labelPath[k], 0f, labelPaint)
             // icon badge on the common radial line
             val hot = k == 0 && charging
-            h.fillP.color = if (hot) h.accent else EdgeView.C_FILL
+            h.fillP.color = if (hot) h.accent else h.cFill
             h.fillP.alpha = ai
             c.drawCircle(bx[k], by[k], badgeR, h.fillP)
             val res = when (k) {
@@ -175,11 +180,11 @@ internal class WinDevice(h: EdgeView) : Win(h, "device", 1) {
             val ic = h.icon(res, hot)
             ic.bounds = badgeRect[k]
             ic.alpha = ai
-            ic.draw(c)
+            h.drawIc(c, ic)
         }
         pctPaint.alpha = ai
-        if (showArc[0]) c.drawTextOnPath(pctStr, pctPath, pctOff, 0f, pctPaint)
+        if (showArc[0]) h.arcText(c, pctStr, pctPath, pctOff, pctPaint)
         tempPaint.alpha = ai
-        if (showTemp) c.drawTextOnPath(tempStr, tempPath, tempOff, 0f, tempPaint)
+        if (showTemp) h.arcText(c, tempStr, tempPath, tempOff, tempPaint)
     }
 }

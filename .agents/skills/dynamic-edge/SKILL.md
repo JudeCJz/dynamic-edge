@@ -403,3 +403,38 @@ front. Needs WRITE_SECURE_SETTINGS (pm grant) + usage access; without both the f
 - Known limits: an app that checks the accessibility list before its first window appears may still complain
   the first time - open it again (we are already off by then). If the user turns the overlay off by hand while
   paused, the gate still turns it back on when the app is left.
+
+## Shortcut tiles (2026-11-15): custom Quick tiles with a chosen icon
+
+A shortcut tile opens one target: a Settings page (optionally scrolled to and highlighting one preference), an app,
+or an app's info page. The user makes it from the Quick layout editor tray (Shortcuts > "New shortcut").
+
+Files: `ShortcutStore.kt` (data, intent, launch, icon list `ShortcutIcons`), `ShortcutCatalog.kt` (curated Settings
+destinations), `ShortcutPickerActivity.kt` (search, then icon + label), 20 new Lucide vectors `ic_smartphone`, `ic_code`,
+`ic_globe`, `ic_terminal`, `ic_bug`, `ic_info`, `ic_hash`, `ic_key`, `ic_user`, `ic_upload`, `ic_folder`, `ic_file`,
+`ic_star`, `ic_heart`, `ic_zap`, `ic_home`, `ic_link`, `ic_clock`, `ic_calendar`, `ic_mail` (the other 20 icons of the
+40-icon grid are existing drawables).
+
+- Layout spec: `sc:<uuid>` in the QuickConfig v2 rings like any tile id (`QuickConfig.valid` accepts the prefix; old
+  layouts load unchanged). If the data is missing the slot is skipped on the overlay.
+- Data: Prefs key `quick_shortcuts` = `{"v":1,"items":[{"id","kind","action","pkg","cls","hl","icon","app","label","target"}]}`.
+  kind `settings` (action + optional hl highlight key + optional pkg/cls component), `app` (pkg + cls, launcher
+  activity), `appinfo` (pkg, `ACTION_APPLICATION_DETAILS_SETTINGS`). icon = name in `ShortcutIcons.ALL`; app = true
+  draws the target app's own icon (kinds app / appinfo) on a white disc like third-party glyphs.
+- Highlight: the intent gets extras `:settings:fragment_args_key` = key and `:settings:show_fragment_args` = Bundle with
+  the same key; AOSP Settings scrolls to and highlights that preference (best effort; vendor Settings may ignore it and
+  just open the page). E.g. About phone + `build_number`, Developer options + `enable_adb`.
+- Overlay: `WinQuick` treats the id like other tiles: inactive look, icon from the store (or app bitmap in `cusBmp`);
+  `Tiles.perform` -> `ShortcutStore.launch` (NEW_TASK, falls back to Settings, true = panel collapses); long-press ->
+  `ShortcutStore.edit` (picker in edit mode). `EdgeService` listens to `quick_shortcuts` too and reloads the quick window.
+- Editor: tray section "Shortcuts" = "New shortcut" (plus) + shortcuts not placed (no free slot). Created tiles go to
+  the first free slot (`onActivityResult`). Selecting a placed shortcut shows "Edit" in the selection row. Removing it
+  (trash or drag out) deletes its data; the editor keeps the removed item in memory so Undo restores it.
+- Picker: step 1 search over catalog + launcher apps + "App info: <name>" (empty query: catalog and apps); step 2 icon
+  grid (app icon first when the target has an app, then 40 Lucide icons), optional label (default = target name), Save.
+- Catalog: `ShortcutCatalog.ALL` entries `e(id, label, keywords, action, hl, icon)`; actions are string literals so
+  hidden AOSP actions work; entries whose intent does not resolve (`resolveActivity`) are hidden (cached per process).
+  To add one: append a line with a unique id, lowercase keywords, optional highlight key (AOSP preference key) and
+  one of the icon names in `ShortcutIcons`.
+- Related fix: `AppRing.scale` (moved out of `WinApps.applyRingScale`) applies the apps ring percents
+  (`w_apps_ring_in` / `w_apps_ring_out`); `WinApps.layout` and the editor's `RingPreview` both call it.

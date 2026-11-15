@@ -33,6 +33,7 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
     private val cusWhite = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN) }
     private val cusBlack = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = PorterDuffColorFilter(Color.BLACK, PorterDuff.Mode.SRC_IN) }
     private val cusPlain = Paint(Paint.FILTER_BITMAP_FLAG)
+    private var tintInk = Color.WHITE
 
     init {
         arcSet.set(raw.arcs.take(2))
@@ -65,13 +66,24 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
             sPend[i] = false
             sAvail[i] = true
         }
+        shownN[0] = 0
+        shownN[1] = 0
         for (r in 0..1) {
             val ring = lay.rings[r]
+            var kk = 0 // slot index after tiles that cannot work on this phone are dropped (empty slots stay)
             for (k in ring.indices) {
-                val id = ring[k] ?: continue
-                val i = r * QuickConfig.RING_MAX + k
+                val id = ring[k]
+                if (id == null) {
+                    kk++
+                    continue
+                }
+                if (ShortcutStore.isId(id) && ShortcutStore.get(h.context, id) == null) continue // its data is gone
+                if (!TileSupport.usable(h.context, id)) continue // checked once per layout, not per frame
+                val i = r * QuickConfig.RING_MAX + kk
+                kk++
                 slotId[i] = id
-                sIcon[i] = Tiles.staticIcon(id)
+                sIcon[i] = if (ShortcutStore.isId(id)) ShortcutStore.iconRes(h.context, id) else Tiles.staticIcon(id)
+                shownN[r] = kk
             }
         }
         loadCustomIcons()
@@ -83,6 +95,12 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
         val px = glyphPx()
         for (i in 0 until ARC0) {
             val id = slotId[i] ?: continue
+            if (ShortcutStore.isId(id)) {
+                // a shortcut that uses its target app's own icon (drawn on a white disc like a third-party glyph)
+                cusBmp[i] = ShortcutStore.appBitmap(h.context, id, px)
+                cusTint[i] = false
+                continue
+            }
             if (!QsCatalog.isCustom(id)) continue
             val e = QsCatalog.entry(h.context, id) ?: continue
             cusBmp[i] = QsCatalog.bitmap(h.context, e, px)
@@ -94,17 +112,22 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
 
     private fun slotValid(i: Int): Boolean = slotId[i] != null
 
+    /** Per ring: slots up to the last shown tile; the shown tiles spread evenly over the whole ring window. */
+    private val shownN = IntArray(2)
+
     override fun layout(hw: Float, brad: Float) {
-        geom.compute(rad, h.dp(1f), h.idleSizePx.toFloat(), arcSet.n, brad)
+        cusPlain.isFilterBitmap = !IconTheme.pixelated(h.context) // app icons: sharp when pixelated
+        geom.compute(rad, h.dp(1f), h.idleSizePx.toFloat(), arcSet.n, brad,
+            Prefs.ringPct(h.context, Prefs.KEY_QUICK_RING_IN, Prefs.RING_IN_MAX), Prefs.ringPct(h.context, Prefs.KEY_QUICK_RING_OUT))
         applyModel()
         for (r in 0..1) {
-            val n = geom.cap[r]
+            val n = shownN[r]
             for (k in 0 until n) {
                 val i = r * QuickConfig.RING_MAX + k
-                place(i, geom.ringR(r), slotAngle(k, n), geom.chip[r])
+                place(i, geom.ringR(r), geom.angle(r, k, n), geom.chip[r])
             }
         }
-        arcSet.layout(geom.arcR)
+        arcSet.layout(geom.arcR, geom.margin[1])
         if (started) {
             refreshTiles()
             arcSet.refresh()
@@ -155,7 +178,7 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
             sIcon[i] = ic
             h.warm(ic)
             // real SystemUI glyph (cached per id + state), built here and never on the draw path
-            sysBmp[i] = if (QsCatalog.isCustom(id)) null else TileIcons.system(h.context, id, sTog[i] && sOn[i], glyphPx())
+            sysBmp[i] = if (QsCatalog.isCustom(id) || ShortcutStore.isId(id)) null else TileIcons.system(h.context, id, sTog[i] && sOn[i], glyphPx())
         }
     }
 
@@ -184,20 +207,32 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
                 isSys = bmp != null
             }
             if (bmp == null) {
-                drawBtn(c, i, if (on) Color.WHITE else EdgeView.C_FILL, sIcon[i], on, a, ba)
+                drawBtn(c, i, if (on) h.ink else h.cFill, sIcon[i], on, a, ba)
                 continue
             }
             // third-party glyph: tinted glyphs follow the on/off colours, app icons sit on a white disc
             val plain = isCus && !isSys && !cusTint[i]
             val ps = isPressed(i)
-            drawBtn(c, i, if (on || plain) Color.WHITE else EdgeView.C_FILL, 0, on, a, ba)
+            drawBtn(c, i, if (on || plain) h.ink else h.cFill, 0, on, a, ba)
+            if (tintInk != h.ink) {
+                tintInk = h.ink
+                cusWhite.colorFilter = PorterDuffColorFilter(h.ink, PorterDuff.Mode.SRC_IN)
+                cusBlack.colorFilter = PorterDuffColorFilter(h.inkOn, PorterDuff.Mode.SRC_IN)
+            }
             val p = if (plain) cusPlain else if (on) cusBlack else cusWhite
             p.alpha = (255f * ba + 0.5f).toInt()
             if (ps) {
                 c.save()
                 c.scale(EdgeView.PRESS_SCALE, EdgeView.PRESS_SCALE, cx[i], cy[i])
             }
-            c.drawBitmap(bmp, null, iconRect[i], p)
+            if (h.mirror) {
+                c.save()
+                c.scale(-1f, 1f, cx[i], cy[i])
+                c.drawBitmap(bmp, null, iconRect[i], p)
+                c.restore()
+            } else {
+                c.drawBitmap(bmp, null, iconRect[i], p)
+            }
             if (ps) c.restore()
         }
         arcSet.draw(c, a, h.accent)

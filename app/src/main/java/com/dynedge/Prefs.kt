@@ -25,12 +25,16 @@ object Prefs {
     const val KEY_APPS_ICON = "w_apps_icon"        // Float dp, icon size on the APPS ring (32..48, default 40)
     const val KEY_APPS_GAP = "w_apps_gap"          // Float dp, space between icons and between rings (4..20, default 8)
     const val KEY_APPS_RECENTS = "w_apps_recents"  // Boolean, recent-apps ribbon on the APPS window (default true)
+    const val KEY_APPS_RING_IN = "w_apps_ring_in"  // Float percent, APPS inner ring radius (60..100, default 100 = today's layout)
+    const val KEY_APPS_RING_OUT = "w_apps_ring_out" // Float percent, APPS outer ring radius (60..100, default 100)
+    const val KEY_QUICK_RING_IN = "w_quick_ring_in"  // Float percent, QUICK inner ring radius (60..140, default 100)
+    const val KEY_QUICK_RING_OUT = "w_quick_ring_out" // Float percent, QUICK outer ring radius (60..100, default 100)
     const val KEY_MEDIA_ART = "w_media_art"        // Boolean, album art in the MEDIA circle (default true)
     const val KEY_MEDIA_SKIP = "w_media_skip"      // Boolean, previous / next buttons (default true)
     const val KEY_MEDIA_TEXT = "w_media_text"      // Boolean, title and artist arcs (default true)
     const val KEY_MEDIA_SEEK = "w_media_seek"      // Boolean, progress / seek arc and times (default true)
-    const val KEY_CLIP_ROWS = "w_clip_rows"        // Int 1..4, clips shown in the CLIPBOARD window (default 4)
-    const val KEY_NOTIF_ROWS = "w_notif_rows"      // Int 1..4, notifications in the ALERTS window (default 4)
+    const val KEY_CLIP_ROWS = "w_clip_rows"        // Int 1..5, clips shown in the CLIPBOARD window (default 5)
+    const val KEY_NOTIF_ROWS = "w_notif_rows"      // Int 1..5, notifications in the ALERTS window (default 5)
     const val KEY_NOTIF_BODY = "w_notif_body"      // Boolean, grey body text after the title (default true)
     const val KEY_NOTIF_ICONS = "w_notif_icons"    // Boolean, app icons in front of each row (default true)
     const val KEY_TIMER_P = "w_timer_p"            // Int 1..60, + index 0..3: the four TIMER preset chips
@@ -46,12 +50,20 @@ object Prefs {
     const val APPS_GAP_MAX = 20f
     const val APPS_GAP_DEF = 8f
 
+    const val RING_MIN = 60f
+    const val RING_DEF = 100f
+    const val RING_MAX = 100f          // APPS rings and the QUICK outer ring: already at the rim / slider clearance
+    const val RING_IN_MAX = 140f       // QUICK inner ring has room to move out (clamped to outer - one tile)
+
+    fun ringPct(ctx: Context, key: String, max: Float = RING_MAX): Float =
+        prefs(ctx).getFloat(key, RING_DEF).coerceIn(RING_MIN, max)
+
     fun appsIconDp(ctx: Context): Float =
         prefs(ctx).getFloat(KEY_APPS_ICON, APPS_ICON_DEF).coerceIn(APPS_ICON_MIN, APPS_ICON_MAX)
     fun appsGapDp(ctx: Context): Float =
         prefs(ctx).getFloat(KEY_APPS_GAP, APPS_GAP_DEF).coerceIn(APPS_GAP_MIN, APPS_GAP_MAX)
     fun flag(ctx: Context, key: String): Boolean = prefs(ctx).getBoolean(key, true)
-    fun rows(ctx: Context, key: String): Int = prefs(ctx).getInt(key, 4).coerceIn(1, 4)
+    fun rows(ctx: Context, key: String, max: Int = 4): Int = prefs(ctx).getInt(key, max).coerceIn(1, max)
     fun timerPreset(ctx: Context, i: Int): Int = prefs(ctx).getInt(KEY_TIMER_P + i, TIMER_DEF[i]).coerceIn(1, 60)
 
     fun prefs(ctx: Context): SharedPreferences = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -208,11 +220,97 @@ object Prefs {
 
     const val KEY_BASE = "base"                // Int colour, solid base of the edge shape (default black)
     val BASES = intArrayOf(
-        0xFF000000.toInt(), 0xFF111114.toInt(), 0xFF1C1C1E.toInt(), 0xFF1A1424.toInt(),
-        0xFF0E1A24.toInt(), 0xFF1A2418.toInt(), 0xFF241414.toInt(), 0xFF2C2C2E.toInt()
+        0xFF000000.toInt(), 0xFF1C1C1E.toInt(), 0xFF1A2440.toInt(), 0xFF1E3A2A.toInt(),
+        0xFF3A1A1A.toInt(), 0xFF2E1A40.toInt(), 0xFF8E8E93.toInt(), 0xFFF2F2F7.toInt()
     )
-    @Suppress("UNUSED_PARAMETER")
-    fun base(ctx: Context): Int = 0xFF000000.toInt()
+    /** Solid colour of the edge body (default black). Light colours flip the content ink to black. */
+    fun base(ctx: Context): Int = prefs(ctx).getInt(KEY_BASE, 0xFF000000.toInt()) or (0xFF shl 24)
+
+    // ---- colour strips: four presets each, then the user's own saved colours (comma-separated ARGB ints)
+    const val KEY_ACCENT_SAVED = "accent_saved"
+    const val KEY_BASE_SAVED = "base_saved"
+    val ACCENT_PRESETS = intArrayOf(ACCENTS[0], ACCENTS[1], ACCENTS[3], ACCENTS[4])
+    val BASE_PRESETS = intArrayOf(0xFF000000.toInt(), 0xFF1C1C1E.toInt(), 0xFF1A2440.toInt(), 0xFFF2F2F7.toInt())
+
+    fun savedColours(ctx: Context, key: String): List<Int> =
+        (prefs(ctx).getString(key, "") ?: "").split(',').mapNotNull { it.trim().toLongOrNull()?.toInt() }
+
+    private fun putSaved(ctx: Context, key: String, list: List<Int>) {
+        prefs(ctx).edit().putString(key, list.joinToString(",")).apply()
+    }
+
+    fun addSavedColour(ctx: Context, key: String, col: Int) {
+        val c = col or (0xFF shl 24)
+        val list = savedColours(ctx, key)
+        if (list.any { (it or (0xFF shl 24)) == c }) return
+        putSaved(ctx, key, list + c)
+    }
+
+    fun removeSavedColour(ctx: Context, key: String, col: Int) {
+        putSaved(ctx, key, savedColours(ctx, key).filter { it != col })
+    }
+
+    // ---- app icons (IconTheme): corner of the rounded square and pixelation
+    const val KEY_ICON_CORNER = "icon_corner"  // Int 0..50 % of the icon size (default 28; 50 = circle)
+    const val ICON_CORNER_DEF = 28
+    fun iconCorner(ctx: Context): Int = prefs(ctx).getInt(KEY_ICON_CORNER, ICON_CORNER_DEF).coerceIn(0, 50)
+    const val KEY_ICON_PIXEL = "icon_pixel"    // Int 0..100, 0 = smooth, 100 = coarsest pixel grid
+    fun iconPixel(ctx: Context): Int = prefs(ctx).getInt(KEY_ICON_PIXEL, 0).coerceIn(0, 100)
+
+    // ---- placement: floating edge, side, position, long-press hide
+    const val KEY_FLOAT = "float_on"           // Boolean, edge detached from the screen edges (no flare)
+    fun floatOn(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_FLOAT, false)
+    const val KEY_FLOAT_GAP = "float_gap"      // Float dp 0..48, gap to the screen edges while floating (default 12)
+    const val FLOAT_GAP_MAX = 48f
+    const val FLOAT_GAP_DEF = 12f
+    fun floatGapDp(ctx: Context): Float = prefs(ctx).getFloat(KEY_FLOAT_GAP, FLOAT_GAP_DEF).coerceIn(0f, FLOAT_GAP_MAX)
+    const val KEY_POS = "edge_pos"             // Int 0..100 %, 0 = in the corner, 100 = bottom centre
+    fun edgePos(ctx: Context): Int = prefs(ctx).getInt(KEY_POS, 0).coerceIn(0, 100)
+    const val KEY_SIDE_LEFT = "side_left"      // Boolean, edge in the bottom-left corner (mirrored)
+    fun sideLeft(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_SIDE_LEFT, false)
+    /** What a long-press on the closed edge does. Default "hide" (for [hideSeconds]). */
+    const val KEY_LONG_ACTION = "long_action"
+    const val LA_HIDE = "hide"
+    const val LA_SETTINGS = "settings"           // open Dynamic Edge settings
+    const val LA_NOTIFICATIONS = "notifications" // pull down the notification shade
+    const val LA_QUICK_SETTINGS = "quick_settings"
+    const val LA_RECENTS = "recents"
+    const val LA_LOCK = "lock"                   // lock the screen
+    const val LA_SCREENSHOT = "screenshot"
+    const val LA_POWER = "power"                 // power menu
+    const val LA_TORCH = "torch"
+    const val LA_ASSISTANT = "assistant"
+    const val LA_NONE = "none"
+    val LONG_ACTIONS = arrayOf(LA_HIDE, LA_SETTINGS, LA_NOTIFICATIONS, LA_QUICK_SETTINGS, LA_RECENTS, LA_LOCK,
+        LA_SCREENSHOT, LA_POWER, LA_TORCH, LA_ASSISTANT, LA_NONE)
+    fun longAction(ctx: Context): String =
+        prefs(ctx).getString(KEY_LONG_ACTION, LA_HIDE)?.takeIf { it in LONG_ACTIONS } ?: LA_HIDE
+
+    const val KEY_HIDE_S = "hide_s"            // Int 1..30 s, long-press on the idle edge hides it this long
+    const val HIDE_S_DEF = 5
+    fun hideSeconds(ctx: Context): Int = prefs(ctx).getInt(KEY_HIDE_S, HIDE_S_DEF).coerceIn(1, 30)
+
+    // ---- pixel mode: the whole app drawn as pixel art
+    const val KEY_PIXEL_MODE = "pixel_mode"    // Boolean (default false)
+    fun pixelMode(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_PIXEL_MODE, false) && !glass(ctx)
+    const val KEY_PIXEL_SIZE = "pixel_size"    // Float dp 1.5..6, size of one art pixel in pixel mode (default 3)
+    const val PIXEL_SIZE_MIN = 1.5f
+    const val PIXEL_SIZE_MAX = 6f
+    const val PIXEL_SIZE_DEF = 3f
+    fun pixelSizeDp(ctx: Context): Float = prefs(ctx).getFloat(KEY_PIXEL_SIZE, PIXEL_SIZE_DEF).coerceIn(PIXEL_SIZE_MIN, PIXEL_SIZE_MAX)
+
+    // ---- glass mode: translucent frosted body (exclusive with pixel mode)
+    const val KEY_GLASS = "glass"              // Boolean (default false)
+    const val KEY_GLASS_BLUR = "glass_blur"    // Int 0..100
+    const val KEY_GLASS_FROST = "glass_frost"  // Int 0..100, grain strength
+    const val KEY_GLASS_TINT = "glass_tint"    // Int 0..100, how much body colour shows
+    /** Written by the overlay: 0 unknown, 1 real backdrop blur works, 2 not available on this phone. */
+    const val KEY_GLASS_BLUR_OK = "glass_blur_ok"
+    fun glass(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_GLASS, false)
+    fun glassBlur(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_BLUR, 60).coerceIn(0, 100)
+    fun glassFrost(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_FROST, 40).coerceIn(0, 100)
+    fun glassTint(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_TINT, 35).coerceIn(0, 100)
+    fun glassBlurOk(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_BLUR_OK, 0)
 
     /** Gradient colour 1: the hot core of the edge shape. 0 = Auto (follows the accent). */
     const val KEY_GRAD1 = "grad1"

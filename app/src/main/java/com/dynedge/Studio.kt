@@ -83,6 +83,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     private var needRebuild = false
     private var needLook = false
+    private var needColour = false
     private var needWins = false
     private var needApps = false
     private var needMore = false
@@ -166,6 +167,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     }
 
     fun onDestroy() {
+        LiveTest.listener = null
         Prefs.prefs(a).unregisterOnSharedPreferenceChangeListener(prefListener)
         root.removeCallbacks(flush)
         root.removeCallbacks(closePreview)
@@ -189,6 +191,10 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
                 needLook = true
                 if (!picking) needRebuild = true
             }
+            Prefs.KEY_ACCENT_SAVED, Prefs.KEY_BASE_SAVED -> {
+                if (picking) return
+                needColour = true
+            }
             WindowsConfig.KEY, QuickConfig.KEY -> needWins = true
             Prefs.KEY_APPS, IconTheme.KEY -> needApps = true
             "saved_looks" -> needMore = true
@@ -205,9 +211,14 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         if (needRebuild) {
             needRebuild = false
             needLook = false
+            needColour = false
             needApps = false
             needMore = false
             rebuildAll()
+        }
+        if (needColour) {
+            needColour = false
+            rebuildPanel(T_COLOUR)
         }
         if (needLook) {
             needLook = false
@@ -267,6 +278,33 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         a.startActivity(Intent(a, SettingsActivity::class.java))
     }
 
+    /** Flat list of only the missing permissions; each row opens its screen. */
+    private fun showMissing() {
+        val list = Perms.missing(a)
+        if (list.isEmpty()) { refreshStatus(); return }
+        val col = LinearLayout(a).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(a.dp(8), a.dp(8), a.dp(8), a.dp(8))
+        }
+        val dialog = android.app.AlertDialog.Builder(a).setTitle("Missing permissions").setView(col)
+            .setNegativeButton("Close", null).create()
+        for (p in list) {
+            val r = row().apply {
+                isClickable = true
+                background = a.rippleBg()
+                setPadding(a.dp(8), 0, a.dp(8), 0)
+                contentDescription = p.label
+                setOnClickListener { dialog.dismiss(); Perms.open(a, p.intent) }
+            }
+            r.addView(a.icon(permIcon(p.label), acc, 20), a.lp(a.dp(24), a.dp(24)))
+            r.addView(a.txt(p.label, 15f, Skin.TEXT), a.lp(0, WRAP, 1f).apply { leftMargin = a.dp(14) })
+            r.addView(a.icon(R.drawable.ic_chevron_right, acc, 20), a.lp(a.dp(24), a.dp(24)))
+            col.addView(r, a.lp(MATCH, WRAP))
+        }
+        dialog.setOnShowListener { dialog.flat(acc) }
+        dialog.show()
+    }
+
     private fun refreshStatus() {
         if (mode != MODE_MAIN) return
         val missing = Perms.missing(a).size
@@ -276,7 +314,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
                 Perms.open(a) { Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS) }
             })
             !EdgeService.connected -> Triple("Overlay stopped", "Fix", { Perms.open(a) { Perms.appDetails(a) } })
-            missing > 0 -> Triple(if (missing == 1) "1 permission needed" else "$missing permissions needed", "Fix", { openSettings() })
+            missing > 0 -> Triple("Some permissions are missing", "Fix", { showMissing() })
             else -> Triple("", "", {})
         }
         if (msg.isEmpty()) {
@@ -479,26 +517,6 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         return r
     }
 
-    /** Icon with a short caption (only where the icon alone would be ambiguous). */
-    private fun action(res: Int, label: String, desc: String, click: () -> Unit): View {
-        val v = LinearLayout(a).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            minimumHeight = a.dp(48)
-            setPadding(a.dp(12), 0, a.dp(14), 0)
-            isClickable = true
-            background = a.rippleBg()
-            contentDescription = desc
-            setOnClickListener {
-                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                click()
-            }
-        }
-        v.addView(a.icon(res, acc, 20))
-        v.addView(a.txt(label, 13f, Skin.TEXT_2).apply { setPadding(a.dp(8), 0, 0, 0) })
-        return v
-    }
-
     private fun hscroll(content: LinearLayout): HorizontalScrollView = HorizontalScrollView(a).apply {
         isHorizontalScrollBarEnabled = false
         overScrollMode = View.OVER_SCROLL_NEVER
@@ -523,43 +541,57 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     // ---------------------------------------------------------------- Colour
 
-    /** The edge colour: the only colour the user picks (the rest of the look is black and white). */
+    /** Edge and body colour: four presets, the user's saved colours, then "+" for the picker. */
     private fun colourPanel(box: LinearLayout) {
-        val accent = Prefs.accent(a)
-        box.addView(swatchStrip(R.drawable.ic_palette, "Edge colour", Prefs.ACCENTS, accent, { col ->
-            edit().putInt(Prefs.KEY_ACCENT, col).apply()
-        }) {
-            pick("Edge colour", accent, Prefs.KEY_ACCENT)
+        box.addView(swatchStrip(R.drawable.ic_palette, "Edge colour", Prefs.ACCENT_PRESETS, Prefs.KEY_ACCENT,
+            Prefs.KEY_ACCENT_SAVED, Prefs.accent(a)))
+        box.addView(swatchStrip(R.drawable.ic_droplet, "Body colour", Prefs.BASE_PRESETS, Prefs.KEY_BASE,
+            Prefs.KEY_BASE_SAVED, Prefs.base(a)))
+        val gl = Prefs.glass(a)
+        val glassBox = LinearLayout(a).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (gl) View.VISIBLE else View.GONE
+        }
+        box.addView(toggleRow(R.drawable.ic_layers, "Glass", gl) { v ->
+            val e = edit().putBoolean(Prefs.KEY_GLASS, v)
+            if (v) e.putBoolean(Prefs.KEY_PIXEL_MODE, false)
+            e.apply()
+            glassBox.visibility = if (v) View.VISIBLE else View.GONE
+            if (v) a.recreate()
         })
+        fun gs(res: Int, cap: String, key: String, v: Int, def: Int) = slider(res, cap, 0f, 100f, v.toFloat(), def.toFloat(),
+            start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putInt(key, it.toInt()).apply()
+        }
+        glassBox.addView(gs(R.drawable.ic_droplet, "Blur", Prefs.KEY_GLASS_BLUR, Prefs.glassBlur(a), 60))
+        if (Prefs.glassBlurOk(a) == 2) {
+            glassBox.addView(a.txt("Blur not available on this phone", 12f, Skin.TEXT_2).apply {
+                setPadding(a.dp(8), 0, a.dp(8), a.dp(6))
+            })
+        }
+        box.addView(glassBox)
     }
 
-    private fun pick(title: String, colour: Int, key: String) {
+    /** Opens the picker; the colour applies live and is saved to the strip when the picker closes. */
+    private fun pick(title: String, colour: Int, key: String, savedKey: String) {
         picking = true
+        var last = colour
         ColorPicker.show(a, title, colour, acc, null, colour, {
             picking = false
+            if (last != colour) Prefs.addSavedColour(a, savedKey, last)
             rebuildAll()
-        }) { col -> edit().putInt(key, col).apply() }
+        }) { col ->
+            last = col
+            edit().putInt(key, col).apply()
+        }
     }
 
-    private fun swatchStrip(lead: Int, desc: String, colors: IntArray, cur: Int, onPick: (Int) -> Unit, onCustom: () -> Unit): View {
-        val strip = LinearLayout(a).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val sw = ArrayList<Swatch>()
+    private fun swatchStrip(lead: Int, desc: String, presets: IntArray, key: String, savedKey: String, cur: Int): View {
+        val saved = Prefs.savedColours(a, savedKey)
         val curOpaque = cur or (0xFF shl 24)
-        val custom = colors.none { (it or (0xFF shl 24)) == curOpaque }
-        val hue = HueCell(a).apply {
-            colour = curOpaque
-            chosen = custom
-            ring = acc
-            contentDescription = "$desc, custom"
-            setOnClickListener {
-                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                onCustom()
-            }
-        }
-        for (col in colors) {
+        val sw = ArrayList<Swatch>()
+        val cells = ArrayList<View>()
+        fun add(col: Int, removable: Boolean) {
             val s = Swatch(a, col, (col or (0xFF shl 24)) == curOpaque, acc).apply {
                 isClickable = true
                 contentDescription = "$desc ${ColorPicker.hex(col)}"
@@ -570,17 +602,45 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
                     o.chosen = o === s
                     o.invalidate()
                 }
-                hue.chosen = false
-                onPick(col)
+                edit().putInt(key, col).apply()
+            }
+            if (removable) s.setOnLongClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                a.confirmDialog("Remove colour?", ColorPicker.hex(col), "Remove") {
+                    Prefs.removeSavedColour(a, savedKey, col)
+                }
+                true
             }
             sw.add(s)
-            strip.addView(s, a.lp(0, a.dp(44), 1f))
+            cells.add(s)
         }
-        strip.addView(hue, a.lp(0, a.dp(44), 1f))
+        for (c in presets) add(c, false)
+        for (c in saved) add(c, true)
+        val plus = FrameLayout(a).apply {
+            isClickable = true
+            background = a.rippleBg()
+            contentDescription = "$desc, add colour"
+            addView(a.icon(R.drawable.ic_plus, acc, 20), FrameLayout.LayoutParams(a.dp(24), a.dp(24), Gravity.CENTER))
+            setOnClickListener {
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                pick(desc, cur, key, savedKey)
+            }
+        }
+        cells.add(plus)
         val block = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         block.addView(captionLine(lead, desc))
-        // equal-weight cells: the swatches spread evenly across the full width
-        block.addView(strip, a.lp(MATCH, WRAP))
+        // equal-weight cells, 6 to a row; extra colours wrap onto the next row
+        val per = 6
+        var r: LinearLayout? = null
+        for ((k, v) in cells.withIndex()) {
+            if (k % per == 0) {
+                r = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                block.addView(r, a.lp(MATCH, WRAP))
+            }
+            r!!.addView(v, a.lp(0, a.dp(44), 1f))
+        }
+        val rest = cells.size % per
+        if (rest != 0) for (k in 0 until per - rest) r!!.addView(View(a), a.lp(0, 1, 1f))
         return block
     }
 
@@ -601,31 +661,240 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     // ---------------------------------------------------------------- Shape
 
     private fun shapePanel(box: LinearLayout) {
-        box.addView(slider(R.drawable.ic_bean, "Corner size", Prefs.IDLE_MIN, Prefs.IDLE_MAX, Prefs.idleDp(a), Prefs.IDLE_DEF,
+        box.addView(slider(R.drawable.ic_bean, "Idle size", Prefs.IDLE_MIN, Prefs.IDLE_MAX, Prefs.idleDp(a), Prefs.IDLE_DEF,
             start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             Prefs.setIdleDp(a, it)
         })
-        box.addView(slider(R.drawable.ic_quarter, "Open size", Prefs.OPEN_MIN, Prefs.OPEN_MAX, Prefs.openDp(a), Prefs.OPEN_DEF,
+        box.addView(slider(R.drawable.ic_quarter, "Active size", Prefs.OPEN_MIN, Prefs.OPEN_MAX, Prefs.openDp(a), Prefs.OPEN_DEF,
             start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             Prefs.setOpenDp(a, it)
         })
-        box.addView(slider(R.drawable.ic_flare, "Flare", 0f, Prefs.FLARE_MAX, Prefs.flareDp(a), Prefs.FLARE_DEF,
+        val flare = slider(R.drawable.ic_flare, "Flare", 0f, Prefs.FLARE_MAX, Prefs.flareDp(a), Prefs.FLARE_DEF,
             start = { preview(if (previewOpen) Prefs.PREVIEW_OPEN else Prefs.PREVIEW_IDLE) },
             stop = { preview(Prefs.PREVIEW_NONE) }) {
             edit().putFloat(Prefs.KEY_FLARE, it).apply()
-        })
+        }
+        val dist = slider(R.drawable.ic_maximize, "Gap", 0f, Prefs.FLOAT_GAP_MAX, Prefs.floatGapDp(a), Prefs.FLOAT_GAP_DEF,
+            start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putFloat(Prefs.KEY_FLOAT_GAP, it).apply()
+        }
+        val floating = Prefs.floatOn(a)
+        flare.visibility = if (floating) View.GONE else View.VISIBLE
+        dist.visibility = if (floating) View.VISIBLE else View.GONE
+        box.addView(flare)
         // invisible on the phone, so it only changes the touch area; the dashed square is only shown while dragging
-        box.addView(slider(R.drawable.ic_pointer, "Grab area", Prefs.GRAB_MIN, Prefs.GRAB_MAX, Prefs.grabDp(a), Prefs.GRAB_DEF,
+        box.addView(slider(R.drawable.ic_pointer, "Touch area", Prefs.GRAB_MIN, Prefs.GRAB_MAX, Prefs.grabDp(a), Prefs.GRAB_DEF,
             start = { edit().putBoolean(Prefs.KEY_TOUCH_SHOW, true).apply() },
             stop = { edit().putBoolean(Prefs.KEY_TOUCH_SHOW, false).apply() }) {
             Prefs.setGrabDp(a, it)
         })
-        box.addView(slider(R.drawable.ic_droplet, "Opacity", Prefs.OPACITY_MIN.toFloat(), 100f, Prefs.opacityPct(a).toFloat(), 100f) {
+        box.addView(slider(R.drawable.ic_droplet, "Opacity", Prefs.OPACITY_MIN.toFloat(), 100f, Prefs.opacityPct(a).toFloat(), 100f,
+            start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             edit().putInt(Prefs.KEY_OPACITY, it.toInt()).apply()
         })
         box.addView(toggleRow(R.drawable.ic_sparkles, "Glow", Prefs.glow(a)) { v ->
             edit().putBoolean(Prefs.KEY_GLOW, v).apply()
         })
+        box.addView(sideRow())
+        box.addView(toggleRow(R.drawable.ic_layers, "Floating", floating) { v ->
+            edit().putBoolean(Prefs.KEY_FLOAT, v).apply()
+            flare.visibility = if (v) View.GONE else View.VISIBLE
+            dist.visibility = if (v) View.VISIBLE else View.GONE
+        })
+        box.addView(dist)
+
+        // long press on the closed edge
+        val hide = slider(R.drawable.ic_clock, "Hide time", 1f, 30f, Prefs.hideSeconds(a).toFloat(), Prefs.HIDE_S_DEF.toFloat()) {
+            edit().putInt(Prefs.KEY_HIDE_S, Math.round(it)).apply()
+        }
+        hide.visibility = if (Prefs.longAction(a) == Prefs.LA_HIDE) View.VISIBLE else View.GONE
+        val body = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val lead0 = LONG_ACTIONS.firstOrNull { it.first == Prefs.longAction(a) } ?: LONG_ACTIONS.last()
+        val headIcon = a.icon(lead0.third, acc, 20).apply { layoutParams = a.lp(a.dp(24), a.dp(24)) }
+        val headLabel = a.txt(lead0.second, 15f, Skin.TEXT)
+        val chev = a.icon(R.drawable.ic_chevron_down, acc, 20)
+        var open = false
+        fun setOpen(o: Boolean) {
+            open = o
+            body.visibility = if (o) View.VISIBLE else View.GONE
+            chev.animate().rotation(if (o) 180f else 0f).setDuration(150L).start()
+        }
+        val head = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = a.dp(56)
+            setPadding(a.dp(8), 0, a.dp(4), 0)
+            isClickable = true
+            background = a.rippleBg()
+            contentDescription = "Long press"
+            setOnClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                setOpen(!open)
+            }
+            addView(a.icon(R.drawable.ic_pointer, acc, 20), a.lp(a.dp(24), a.dp(24)))
+            addView(a.txt("Long press", 13f, Skin.TEXT_2), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
+            addView(View(a), a.lp(0, 1, 1f))
+            addView(headIcon)
+            addView(headLabel, a.lp(WRAP, WRAP).apply { leftMargin = a.dp(8) })
+            addView(chev, a.lp(a.dp(40), a.dp(24)))
+        }
+        box.addView(head)
+        body.addView(longPressGrid(hide) { id ->
+            val it = LONG_ACTIONS.first { x -> x.first == id }
+            headIcon.setImageResource(it.third)
+            headLabel.text = it.second
+            setOpen(false)
+        })
+        body.addView(hide)
+        box.addView(body)
+    }
+
+    /** "Live test": one row per dynamic effect; tap to play it on the real edge, tap again to stop. */
+    private fun liveTestPanel(box: LinearLayout) {
+        box.addView(captionLine(R.drawable.ic_activity, "Live test"))
+        val marks = HashMap<String, ImageView>()
+        fun refresh() {
+            for ((id, m) in marks) m.setImageResource(if (LiveTest.isRunning(id)) R.drawable.ic_square else R.drawable.ic_play)
+        }
+        val items = listOf(
+            Triple(LiveTest.DL, "Download", R.drawable.ic_download),
+            Triple(LiveTest.DL_IND, "Download, unknown size", R.drawable.ic_download),
+            Triple(LiveTest.UPLOAD, "Upload", R.drawable.ic_upload),
+            Triple(LiveTest.TIMER, "Timer countdown", R.drawable.ic_timer),
+            Triple(LiveTest.STOPWATCH, "Stopwatch", R.drawable.ic_clock),
+            Triple(LiveTest.DONE, "Timer done", R.drawable.ic_alarm),
+            Triple(LiveTest.CALL_IN, "Incoming call", R.drawable.ic_phone),
+            Triple(LiveTest.CALL_ON, "Ongoing call", R.drawable.ic_phone),
+            Triple(LiveTest.CHARGING, "Charging", R.drawable.ic_bolt),
+            Triple(LiveTest.TRACK, "Track change", R.drawable.ic_music),
+            Triple(LiveTest.COPIED, "Copied", R.drawable.ic_clipboard),
+            Triple(LiveTest.MUSIC, "Music visualiser", R.drawable.ic_audio_lines),
+            Triple(LiveTest.TWO, "Two at once", R.drawable.ic_layers),
+            Triple(LiveTest.HIDE, "Hide", R.drawable.ic_eye),
+            Triple(LiveTest.OPEN, "Open panel", R.drawable.ic_maximize)
+        )
+        for ((id, name, res) in items) {
+            val r = LinearLayout(a).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = a.dp(52)
+                setPadding(a.dp(8), 0, a.dp(4), 0)
+                isClickable = true
+                background = a.rippleBg()
+                contentDescription = name
+                setOnClickListener {
+                    it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    val err = LiveTest.toggle(a, id)
+                    if (err != null) Toast.makeText(a, err, Toast.LENGTH_SHORT).show()
+                    else if (id == LiveTest.MUSIC && LiveTest.isRunning(id) && !Prefs.visualizer(a) && !Prefs.beat(a)) {
+                        Toast.makeText(a, "Visualiser and beat are off", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            r.addView(lead(res))
+            r.addView(a.txt(name, 15f, Skin.TEXT), a.lp(0, WRAP, 1f).apply { leftMargin = a.dp(14) })
+            val m = a.icon(R.drawable.ic_play, acc, 20)
+            marks[id] = m
+            r.addView(m, a.lp(a.dp(52), a.dp(24)))
+            box.addView(r)
+        }
+        box.addView(linkRow(R.drawable.ic_x, "Stop all") { LiveTest.stopAll() })
+        LiveTest.listener = { refresh() }
+        refresh()
+    }
+
+    /** Left / Right as two buttons in one row; the chosen one is filled in the accent colour. */
+    private fun sideRow(): View {
+        val r = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = a.dp(56)
+            setPadding(a.dp(8), 0, a.dp(4), 0)
+        }
+        r.addView(lead(R.drawable.ic_columns))
+        val seg = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
+        val btns = ArrayList<TextView>()
+        fun paint(left: Boolean) {
+            for ((i, b) in btns.withIndex()) {
+                val on = (i == 0) == left
+                b.background = GradientDrawable().apply {
+                    setColor(if (on) acc else Skin.SURFACE_HI)
+                    cornerRadius = a.dpf(20f)
+                }
+                b.setTextColor(if (on) Skin.onColor(acc) else Skin.TEXT)
+            }
+        }
+        for ((i, name) in listOf("Left", "Right").withIndex()) {
+            val b = a.txt(name, 14f, Skin.TEXT, true).apply {
+                gravity = Gravity.CENTER
+                isClickable = true
+                contentDescription = "$name side"
+                setOnClickListener {
+                    performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    edit().putBoolean(Prefs.KEY_SIDE_LEFT, i == 0).apply()
+                    paint(i == 0)
+                }
+            }
+            btns.add(b)
+            seg.addView(b, a.lp(0, a.dp(40), 1f).apply { if (i == 1) leftMargin = a.dp(8) })
+        }
+        paint(Prefs.sideLeft(a))
+        r.addView(seg, a.lp(0, WRAP, 1f).apply { leftMargin = a.dp(14); rightMargin = a.dp(4) })
+        return r
+    }
+
+    // a getter, not a stored val: the page is built from init {} before later property initialisers run
+    private val LONG_ACTIONS: List<Triple<String, String, Int>> get() = listOf(
+        Triple(Prefs.LA_HIDE, "Hide", R.drawable.ic_eye),
+        Triple(Prefs.LA_SETTINGS, "Settings", R.drawable.ic_settings),
+        Triple(Prefs.LA_NOTIFICATIONS, "Notifications", R.drawable.ic_bell),
+        Triple(Prefs.LA_QUICK_SETTINGS, "Quick settings", R.drawable.ic_sliders),
+        Triple(Prefs.LA_RECENTS, "Recents", R.drawable.ic_layers),
+        Triple(Prefs.LA_LOCK, "Lock", R.drawable.ic_lock),
+        Triple(Prefs.LA_SCREENSHOT, "Screenshot", R.drawable.ic_screenshot),
+        Triple(Prefs.LA_POWER, "Power menu", R.drawable.ic_power),
+        Triple(Prefs.LA_TORCH, "Torch", R.drawable.ic_flashlight),
+        Triple(Prefs.LA_ASSISTANT, "Assistant", R.drawable.ic_sparkles),
+        Triple(Prefs.LA_NONE, "Nothing", R.drawable.ic_x)
+    )
+
+    /** The long-press actions as a wrapping grid of icons with short captions; [hide] shows only for Hide. */
+    private fun longPressGrid(hide: View, picked: (String) -> Unit): View {
+        val items = LONG_ACTIONS
+        val cur = Prefs.longAction(a)
+        val icons = ArrayList<Pair<String, RoundIcon>>()
+        val block = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        val per = 4
+        var r: LinearLayout? = null
+        for ((k, item) in items.withIndex()) {
+            if (k % per == 0) {
+                r = row()
+                block.addView(r, a.lp(MATCH, WRAP))
+            }
+            val (id, name, res) = item
+            val ic = RoundIcon(a, res, name, false).apply {
+                accent = acc
+                ink = acc
+                filled = id == cur
+                onClick = {
+                    edit().putString(Prefs.KEY_LONG_ACTION, id).apply()
+                    for ((oid, o) in icons) o.filled = oid == id
+                    hide.visibility = if (id == Prefs.LA_HIDE) View.VISIBLE else View.GONE
+                    picked(id)
+                }
+            }
+            icons.add(Pair(id, ic))
+            val c = LinearLayout(a).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                addView(ic, a.lp(a.dp(48), a.dp(48)))
+                addView(smallCaption(name), a.lp(MATCH, WRAP))
+            }
+            r!!.addView(c, a.lp(0, WRAP, 1f))
+        }
+        val rest = items.size % per
+        if (rest != 0) for (k in 0 until per - rest) r!!.addView(View(a), a.lp(0, 1, 1f))
+        return block
     }
 
     // ---------------------------------------------------------------- Windows
@@ -876,10 +1145,12 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         }
     }
 
-    private fun rowsSlider(key: String): View =
-        slider(R.drawable.ic_layers, "Rows", 1f, 4f, Prefs.rows(a, key).toFloat(), 4f) {
-            edit().putInt(key, Math.round(it).coerceIn(1, 4)).apply()
+    private fun rowsSlider(key: String): View {
+        val mx = if (key == Prefs.KEY_NOTIF_ROWS) 5 else 4
+        return         slider(R.drawable.ic_layers, "Rows", 1f, mx.toFloat(), Prefs.rows(a, key, mx).toFloat(), mx.toFloat()) {
+            edit().putInt(key, Math.round(it).coerceIn(1, mx)).apply()
         }
+    }
 
     /**
      * The APPS window editor: a live ring preview, the app grid (grip = drag at once, long-press also lifts,
@@ -931,12 +1202,32 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         box.addView(grid, a.lp(MATCH, WRAP))
 
         box.addView(slider(R.drawable.ic_maximize, "Icon size", Prefs.APPS_ICON_MIN, Prefs.APPS_ICON_MAX,
-            Prefs.appsIconDp(a), Prefs.APPS_ICON_DEF) {
+            Prefs.appsIconDp(a), Prefs.APPS_ICON_DEF,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             edit().putFloat(Prefs.KEY_APPS_ICON, it).apply()
         })
         box.addView(slider(R.drawable.ic_columns, "Spacing", Prefs.APPS_GAP_MIN, Prefs.APPS_GAP_MAX,
-            Prefs.appsGapDp(a), Prefs.APPS_GAP_DEF) {
+            Prefs.appsGapDp(a), Prefs.APPS_GAP_DEF,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             edit().putFloat(Prefs.KEY_APPS_GAP, it).apply()
+        })
+        box.addView(slider(R.drawable.ic_ring, "Inner ring", Prefs.RING_MIN, Prefs.RING_MAX,
+            Prefs.ringPct(a, Prefs.KEY_APPS_RING_IN), Prefs.RING_DEF,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putFloat(Prefs.KEY_APPS_RING_IN, it).apply()
+        })
+        box.addView(slider(R.drawable.ic_ring, "Outer ring", Prefs.RING_MIN, Prefs.RING_MAX,
+            Prefs.ringPct(a, Prefs.KEY_APPS_RING_OUT), Prefs.RING_DEF,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putFloat(Prefs.KEY_APPS_RING_OUT, it).apply()
+        })
+        box.addView(slider(R.drawable.ic_bean, "Icon roundness", 0f, 50f, Prefs.iconCorner(a).toFloat(), Prefs.ICON_CORNER_DEF.toFloat(),
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putInt(Prefs.KEY_ICON_CORNER, Math.round(it)).apply()
+        })
+        box.addView(slider(R.drawable.ic_grid, "Pixelate", 0f, 100f, Prefs.iconPixel(a).toFloat(), 0f,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putInt(Prefs.KEY_ICON_PIXEL, Math.round(it)).apply()
         })
         box.addView(flagRow(R.drawable.ic_activity, "Recent apps", Prefs.KEY_APPS_RECENTS))
         // ON = themed / monochrome, OFF = system icons; the prefs listener rebuilds this page
@@ -964,7 +1255,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         val iv = ImageView(a).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             try {
-                setImageBitmap(IconTheme.icon(a, cn, a.dp(44)))
+                setImageDrawable(IconTheme.drawable(a, IconTheme.icon(a, cn, a.dp(44))))
             } catch (e: Exception) {
                 // blank
             }
@@ -1024,47 +1315,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         else -> R.drawable.ic_wrench
     }
 
-    private fun permShort(label: String): String = when {
-        label.startsWith("Overlay") -> "Overlay"
-        label.startsWith("Media") -> "Media"
-        label.startsWith("Do Not") -> "DND"
-        label.startsWith("Modify") -> "System"
-        label.startsWith("Assistant") -> "Assistant"
-        label.startsWith("Microphone") -> "Mic"
-        label.startsWith("Usage") -> "Usage"
-        label.startsWith("Secure") -> "Secure"
-        else -> label
-    }
-
     private fun morePanel(box: LinearLayout) {
-        // permissions: one status icon each, captioned; a dot marks what still needs allowing; tap = its screen
-        val all = Perms.list(a)
-        box.addView(captionLine(R.drawable.ic_shield, "Permissions"))
-        var r: LinearLayout? = null
-        for ((k, p) in all.withIndex()) {
-            if (k % 4 == 0) {
-                r = row()
-                box.addView(r, a.lp(MATCH, WRAP))
-            }
-            val ok = try { p.ok() } catch (e: Exception) { false }
-            val c = LinearLayout(a).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            c.addView(PermDot(a, permIcon(p.label), ok, acc).apply {
-                contentDescription = p.label + if (ok) ", allowed" else ", needed"
-                setOnClickListener { Perms.open(a, p.intent) }
-                setOnLongClickListener {
-                    Toast.makeText(a, p.label, Toast.LENGTH_SHORT).show()
-                    true
-                }
-            }, a.lp(MATCH, a.dp(48)))
-            c.addView(smallCaption(permShort(p.label)), a.lp(MATCH, WRAP))
-            r!!.addView(c, a.lp(0, WRAP, 1f))
-        }
-        val rest = all.size % 4
-        if (rest != 0) for (k in 0 until 4 - rest) r!!.addView(View(a), a.lp(0, 1, 1f))
-
         pausePanel(box)
 
         // saved looks
@@ -1121,27 +1372,22 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         }
         box.addView(hscroll(strip), a.lp(MATCH, WRAP).apply { topMargin = a.dp(4) })
 
-        // resets: two equal halves, each centred
-        val ar = row()
-        ar.addView(action(R.drawable.ic_undo, "Look", "Reset look") {
-            val snap = Prefs.snapshot(a, LOOK_ONLY)
-            clearKeys(LOOK_ONLY)
-            rebuildAll()
-            undoBar("Look reset") {
-                Prefs.restore(a, snap)
-                rebuildAll()
-            }
-        }, a.lp(0, WRAP, 1f))
-        ar.addView(action(R.drawable.ic_rotate, "Feel", "Reset feel") {
-            val snap = Prefs.snapshot(a, FEEL_KEYS)
-            clearKeys(FEEL_KEYS)
-            rebuildAll()
-            undoBar("Feel reset") {
-                Prefs.restore(a, snap)
-                rebuildAll()
-            }
-        }, a.lp(0, WRAP, 1f))
-        box.addView(ar)
+        liveTestPanel(box)
+
+        // the very bottom: the whole app as pixel art
+        box.addView(toggleRow(R.drawable.ic_grid, "Pixel mode", Prefs.pixelMode(a)) { v ->
+            val e = edit().putBoolean(Prefs.KEY_PIXEL_MODE, v)
+            if (v) e.putBoolean(Prefs.KEY_GLASS, false)
+            e.apply()
+            a.recreate()
+        })
+        if (Prefs.pixelMode(a)) {
+            box.addView(slider(R.drawable.ic_maximize, "Pixel size", Prefs.PIXEL_SIZE_MIN, Prefs.PIXEL_SIZE_MAX,
+                Prefs.pixelSizeDp(a), Prefs.PIXEL_SIZE_DEF,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+                edit().putFloat(Prefs.KEY_PIXEL_SIZE, it).apply()
+            })
+        }
     }
 
     /** "Pause in apps": master switch + the row that opens the multi-select app picker. Flat, no boxes. */
@@ -1248,8 +1494,6 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         private const val CAPTION_W = 104
 
         /** What "reset look" clears: the editable look keys only (feel, windows, apps and sizes are not touched). */
-        val LOOK_ONLY = arrayOf(Prefs.KEY_ACCENT, Prefs.KEY_GLOW, Prefs.KEY_OPACITY, Prefs.KEY_VIZ_STYLE)
-        val FEEL_KEYS = arrayOf(Prefs.KEY_SPEED)
     }
 }
 

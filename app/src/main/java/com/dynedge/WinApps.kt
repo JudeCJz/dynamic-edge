@@ -29,6 +29,7 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
     private val ring = AppRing.Out(N_APPS)
     private val rot = FloatArray(ITEMS)
     private var iconR = 0f
+    private var drawR = 0f // iconR snapped to whole grid cells when pixelated
     private var ribbonOn = true
 
     // recent-apps ribbon (thin arc row near the outer edge); empty without usage access
@@ -53,6 +54,8 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
         val n = if (started) min(apps.count, N_APPS) else Prefs.apps(ctx).size.coerceAtMost(N_APPS)
         AppRing.compute(ring, n, rad, dp(Prefs.appsIconDp(ctx) / 2f), dp(Prefs.appsGapDp(ctx)), ribbonOn, h.dp(1f))
         iconR = ring.itemR
+        AppRing.scale(ring, Prefs.ringPct(ctx, Prefs.KEY_APPS_RING_IN), Prefs.ringPct(ctx, Prefs.KEY_APPS_RING_OUT),
+            dp(Prefs.appsGapDp(ctx)), h.dp(1f))
         for (k in 0 until N_APPS) {
             if (k < ring.n) {
                 place(k, ring.r[k], ring.ang[k], iconR)
@@ -116,10 +119,16 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
         setRibbon(emptyList())
     }
 
+    /** Half side of a ribbon icon: a whole number of grid cells when pixelated. */
+    private fun ribHalf(): Float = IconTheme.snapSize(h.context, 2f * dp(AppRing.RIB_ICON_DP)) / 2f
+
     private fun setRibbon(list: List<RecentApps.Item>) {
-        val r = dp(AppRing.RIB_ICON_DP)
+        val pix = IconTheme.pixelated(h.context)
+        val r = ribHalf()
         ribN = min(list.size, RIB_MAX)
         for (i in 0 until RIB_MAX) {
+            ribPaint[i].isFilterBitmap = !pix
+            ribPaint[i].isAntiAlias = !pix
             if (i < ribN) {
                 val b = list[i].icon
                 ribPkg[i] = list[i].pkg
@@ -159,8 +168,12 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
     private fun refresh() {
         dirty = true
         appCount = min(min(apps.count, N_APPS), ring.n)
-        val r = iconR
+        val pix = IconTheme.pixelated(h.context)
+        val r = IconTheme.snapSize(h.context, 2f * iconR) / 2f
+        drawR = r
         for (i in 0 until N_APPS) {
+            appPaint[i].isFilterBitmap = !pix
+            appPaint[i].isAntiAlias = !pix
             val b = if (i < appCount) apps.icon(i) else null
             if (b !== appBmp[i]) {
                 appBmp[i] = b
@@ -181,19 +194,20 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
         if (ribN == 0) return
         val ai = (255f * a + 0.5f).toInt()
         val ap = h.arcPaint
-        ap.strokeWidth = dp(1.5f)
-        ap.color = EdgeView.C_TRACK
+        ap.strokeWidth = h.sw(dp(1.5f))
+        ap.color = h.cTrack
         ap.alpha = ai
         ribOval.set(-ribR, -ribR, ribR, ribR)
         c.drawArc(ribOval, 180f + 12f, 66f, false, ap)
-        val r = dp(AppRing.RIB_ICON_DP)
-        val rr = r + dp(3f)
+        val r = ribHalf()
+        val rr = dp(AppRing.RIB_ICON_DP) + dp(3f)
         for (k in 0 until ribN) {
             val i = RIB0 + k
             val ps = isPressed(i)
             c.save()
             c.translate(cx[i], cy[i])
             c.rotate(rot[i])
+            h.unflip(c)
             if (ps) c.scale(EdgeView.PRESS_SCALE, EdgeView.PRESS_SCALE)
             val p = ribPaint[k]
             p.alpha = ai
@@ -220,9 +234,9 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
                 c.drawCircle(x, y, ir[PLUS], h.ringPaint)
             }
             val lp = h.linePaint
-            lp.color = EdgeView.C_GREY
+            lp.color = h.cGrey
             lp.alpha = ai
-            lp.strokeWidth = dp(2f)
+            lp.strokeWidth = h.sw(dp(2f))
             val hh = dp(9f)
             c.drawLine(x - hh, y, x + hh, y, lp)
             c.drawLine(x, y - hh, x, y + hh, lp)
@@ -230,14 +244,15 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
             return
         }
         val ai = (255f * a + 0.5f).toInt()
-        val r = iconR
-        val rr = r + dp(3f)
+        val r = if (drawR > 0f) drawR else iconR
+        val rr = iconR + dp(3f)
         for (k in 0 until appCount) {
             val ps = isPressed(k)
             c.save()
             c.translate(cx[k], cy[k])
             // the icon's up axis lies along the radius, pointing away from the corner
             c.rotate(rot[k])
+            h.unflip(c)
             if (ps) c.scale(EdgeView.PRESS_SCALE, EdgeView.PRESS_SCALE)
             val p = appPaint[k]
             if (p.shader != null) {

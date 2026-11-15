@@ -183,8 +183,10 @@ class DragGrid(ctx: Context, private val cols: Int, private val cellH: Int) : Vi
  */
 class RingPreview(ctx: Context) : View(ctx) {
     var accent = Skin.TEXT
+    private val sq = PixelMode.on(ctx)
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val ip = Paint() // app icons: filtering off while pixelated (see reload)
     private val out = AppRing.Out(Prefs.MAX_APPS)
     private val rect = RectF()
     private var icons: List<Bitmap> = emptyList()
@@ -204,6 +206,9 @@ class RingPreview(ctx: Context) : View(ctx) {
         gapDp = Prefs.appsGapDp(c)
         ribbon = Prefs.flag(c, Prefs.KEY_APPS_RECENTS)
         openDp = Prefs.openDp(c)
+        val pix = IconTheme.pixelated(c)
+        ip.isFilterBitmap = !pix
+        ip.isAntiAlias = !pix
         val list = ArrayList<Bitmap>()
         val px = (Prefs.APPS_ICON_MAX * d).toInt()
         for (cn: ComponentName in Prefs.apps(c)) {
@@ -249,17 +254,18 @@ class RingPreview(ctx: Context) : View(ctx) {
             p.color = Skin.SURFACE_HI
             for (i in 0 until 5) {
                 val a = 45f + (i - 2f) * 13f
-                drawAt(c, rr, a) { c.drawRoundRect(-ir, -ir, ir, ir, ir * 0.3f, ir * 0.3f, p) }
+                drawAt(c, rr, a) { c.drawPill(sq, -ir, -ir, ir, ir, ir * 0.3f, p) }
             }
         }
         val n = icons.size
         AppRing.compute(out, n, radPx, iconDp * d / 2f, gapDp * d, ribbon, d)
+        AppRing.scale(out, Prefs.ringPct(context, Prefs.KEY_APPS_RING_IN), Prefs.ringPct(context, Prefs.KEY_APPS_RING_OUT), gapDp * d, d)
         val ir = out.itemR
         for (k in 0 until out.n) {
             val b = icons[k]
             drawAt(c, min(out.r[k], radPx - 6 * d - ir), out.ang[k]) {
                 rect.set(-ir, -ir, ir, ir)
-                c.drawBitmap(b, null, rect, p)
+                c.drawBitmap(b, null, rect, ip)
             }
         }
         c.restore()
@@ -284,8 +290,9 @@ class DotIcon(ctx: Context, res: Int, desc: String) : View(ctx) {
     var dot = false
         set(v) { field = v; invalidate() }
     private val d = resources.displayMetrics.density
-    private val icon: Drawable = ctx.getDrawable(res)!!.mutate()
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sq = PixelMode.on(ctx)
+    private val icon: Drawable = PixelMode.wrapIcon(ctx, ctx.getDrawable(res)!!.mutate())
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = !sq }
 
     init {
         isClickable = true
@@ -304,7 +311,7 @@ class DotIcon(ctx: Context, res: Int, desc: String) : View(ctx) {
         icon.draw(c)
         if (dot) {
             p.color = dotColor
-            c.drawCircle(l + s - 1 * d, t + 2 * d, 4 * d, p)
+            c.drawDisc(sq, l + s - 1 * d, t + 2 * d, if (sq) 3 * d else 4 * d, p)
         }
     }
 }
