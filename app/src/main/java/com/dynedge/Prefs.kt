@@ -115,6 +115,7 @@ object Prefs {
     const val KEY_HAPTICS = "haptics"          // Boolean
     const val KEY_IDLE_STYLE = "idle_style"    // String, locked to "glyph"
     const val KEY_VISUALIZER = "visualizer"    // Boolean, music bars on the idle bean while playing
+    const val KEY_PREVIEW_TS = "preview_ts"    // Long, last refresh of the preview (the overlay drops a stale one)
     const val KEY_PREVIEW = "preview"          // String "", "idle" or "open"; transient, set by the settings screen
 
     const val KEY_LIVE = "live"                // Boolean, live activities (locked on)

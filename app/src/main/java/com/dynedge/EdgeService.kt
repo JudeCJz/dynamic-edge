@@ -275,6 +275,10 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         // one-shot look migrations (version flag in Prefs), so the overlay never draws a removed option
         Prefs.migrate(this)
         Prefs.migrateLook(this)
+        // a settings preview left behind by a killed settings screen (reinstall, crash) must never stick:
+        // no white backdrop, no forced-open panel, no dashed touch square after a restart
+        Prefs.prefs(this).edit().putString(Prefs.KEY_PREVIEW, Prefs.PREVIEW_NONE)
+            .putBoolean(Prefs.KEY_TOUCH_SHOW, false).apply()
         connected = true
         gating = false
         PauseGate.onServiceUp(this)

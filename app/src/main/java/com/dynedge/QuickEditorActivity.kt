@@ -33,7 +33,6 @@ import android.widget.TextView
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -716,27 +715,28 @@ class QuickEditorActivity : Activity() {
 
         // ---- geometry: slot centres exactly like Win.place
         private fun slotX(r: Int, k: Int): Float {
+            val n = geom.cap[r]
             val rr = min(geom.ringR(r), openR - 6f * d - geom.chip[r])
-            return cx - rr * cos(Math.toRadians(geom.angle(r, k).toDouble())).toFloat()
+            return cx - rr * cos(Math.toRadians(geom.angle(r, k, n).toDouble())).toFloat()
         }
 
         private fun slotY(r: Int, k: Int): Float {
+            val n = geom.cap[r]
             val rr = min(geom.ringR(r), openR - 6f * d - geom.chip[r])
-            return cy - rr * sin(Math.toRadians(geom.angle(r, k).toDouble())).toFloat()
+            return cy - rr * sin(Math.toRadians(geom.angle(r, k, n).toDouble())).toFloat()
         }
 
-        /** Badge centre sits [QuickGeom.inset] above the bottom edge, same line as the bottom-most outer tile. */
         private fun badgeAngle(r: Float): Float =
-            Math.toDegrees(asin((max(geom.inset, 17f * d) / r).toDouble().coerceAtMost(1.0))).toFloat()
+            Math.toDegrees(asin(((13f * d + 4f * d) / r).toDouble().coerceAtMost(1.0))).toFloat()
 
         private fun arcBadgeX(k: Int): Float {
             val r = geom.arcR[k]
-            return cx - r * cos(Math.toRadians(badgeAngle(r).toDouble())).toFloat()
+            return cx - r * cos(Math.toRadians(badgeAngle(geom.arcR[if (arcs.size >= 2) 1 else 0]).toDouble())).toFloat()
         }
 
         private fun arcBadgeY(k: Int): Float {
             val r = geom.arcR[k]
-            return cy - r * sin(Math.toRadians(badgeAngle(r).toDouble())).toFloat()
+            return cy - r * sin(Math.toRadians(badgeAngle(geom.arcR[if (arcs.size >= 2) 1 else 0]).toDouble())).toFloat()
         }
 
         // ---- drawing
@@ -779,11 +779,12 @@ class QuickEditorActivity : Activity() {
 
         private fun drawArc(c: Canvas, k: Int, id: String) {
             val r = geom.arcR[k]
-            val badgeA = badgeAngle(r)
-            val half = Math.toDegrees(asin((13f * d / r).toDouble().coerceAtMost(1.0))).toFloat()
-            val capA = Math.toDegrees(asin((ArcSet.STROKE_DP * d / 2f / r).toDouble().coerceAtMost(1.0))).toFloat()
+            val rmin = geom.arcR[if (arcs.size >= 2) 1 else 0]
+            val badgeA = badgeAngle(rmin)
+            val half = Math.toDegrees(asin((13f * d / rmin).toDouble().coerceAtMost(1.0))).toFloat()
+            val capA = Math.toDegrees(asin((ArcSet.STROKE_DP * d / 2f / rmin).toDouble().coerceAtMost(1.0))).toFloat()
             val s = badgeA + half + 2f + capA
-            val e = 90f - badgeA
+            val e = 90f - s
             p.style = Paint.Style.STROKE
             p.strokeCap = Paint.Cap.ROUND
             p.strokeWidth = ArcSet.STROKE_DP * d

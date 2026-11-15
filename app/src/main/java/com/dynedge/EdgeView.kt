@@ -595,7 +595,36 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     private val liveSize: Float get() = idle * LIVE_SCALE
     private val liveWanted: Boolean get() = liveOn && liveCur != null && screenOn && !hidden
-    private fun closedSize(): Float = if (liveWanted) liveSize else idle
+
+    /** Larger "call" size of the closed bean while a call is ringing (about 2.7x idle, always inside the open panel). */
+    private val callSize: Float get() = min(max(liveSize * 1.15f, min(max(idle * 2.7f, dp(132f)), rad * 0.8f)), rad * 0.9f)
+
+    /** A call that is ringing (it has an answer action): the closed bean shows the big answer / decline view. */
+    private val ringing: Boolean
+        get() {
+            val a = liveCur
+            return a != null && a.kind == LiveActivity.Kind.CALL && a.answer != null && liveWanted
+        }
+
+    private fun closedSize(): Float = if (!liveWanted) idle else if (ringing) callSize else liveSize
+
+    private val callNamePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, resources.displayMetrics)
+    }
+    private val callPathName = Path()
+    private var callNameRaw: String? = null
+    private var callNameShown = ""
+    private var callNameOff = 0f
+    private var callNameLen = 0f
+    private var callBtnR = 0f
+    private var callHitR = 0f
+    private var callAnsX = 0f
+    private var callAnsY = 0f
+    private var callDecX = 0f
+    private var callDecY = 0f
+    private val callAnsRect = Rect()
+    private val callDecRect = Rect()
 
     private val liveTickRunnable = object : Runnable {
         override fun run() {
@@ -621,6 +650,11 @@ class EdgeView(ctx: Context) : View(ctx) {
                     LiveBus.remove(a.key) // a linked clock-app countdown that ran out: never show a stale 0:00
                 }
                 updateViz()
+                return
+            }
+            if (ringing) {
+                invalidateBean() // the pulsing ring of the ringing call view
+                postDelayed(this, 16L)
                 return
             }
             if (a.chronoBase != 0L) rebuildLiveTitle()
@@ -1177,9 +1211,42 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     /** The settings screen is previewing (idle / open): the overlay itself draws a light backdrop behind the shape. */
     fun setBackdrop(on: Boolean) {
+        removeCallbacks(previewWatch)
+        if (on) {
+            pvStamp = Prefs.prefs(context).getLong(Prefs.KEY_PREVIEW_TS, 0L)
+            pvSeenAt = SystemClock.uptimeMillis()
+            postDelayed(previewWatch, 1000L)
+        }
         if (backdropOn == on) return
         backdropOn = on
         invalidate()
+    }
+
+    private var pvStamp = 0L
+    private var pvSeenAt = 0L
+
+    /** A preview nobody refreshes for 4 s (the settings app died or was left) is dropped: backdrop gone, edge closed. */
+    private val previewWatch = object : Runnable {
+        override fun run() {
+            if (!backdropOn) return
+            val p = Prefs.prefs(context)
+            val ts = p.getLong(Prefs.KEY_PREVIEW_TS, 0L)
+            val now = SystemClock.uptimeMillis()
+            if (ts != pvStamp) {
+                pvStamp = ts
+                pvSeenAt = now
+            }
+            if (p.getString(Prefs.KEY_PREVIEW, Prefs.PREVIEW_NONE) == Prefs.PREVIEW_NONE) {
+                setBackdrop(false)
+            } else if (now - pvSeenAt >= 4000L) {
+                p.edit().putString(Prefs.KEY_PREVIEW, Prefs.PREVIEW_NONE).apply()
+                holdOpen = false
+                setBackdrop(false)
+                collapse()
+            } else {
+                postDelayed(this, 1000L)
+            }
+        }
     }
 
     internal fun haptic(kind: Int) {
@@ -1452,7 +1519,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         removeCallbacks(liveTickRunnable)
         val a = liveCur ?: return
         if (!liveWanted || expandedTarget) return
-        if (a.progress == -2f || a.chronoBase != 0L || a.key == TimerControl.KEY_DONE) postDelayed(liveTickRunnable, 40L)
+        if (a.progress == -2f || a.chronoBase != 0L || a.key == TimerControl.KEY_DONE || ringing) postDelayed(liveTickRunnable, 16L)
     }
 
     private fun fmtChrono(ms: Long): String {
@@ -1478,8 +1545,17 @@ class EdgeView(ctx: Context) : View(ctx) {
         return sb.toString()
     }
 
+    private fun rebuildCallName(a: LiveActivity) {
+        callNamePaint.typeface = liveTitlePaint.typeface
+        if (a.title == callNameRaw && callNameLen > 0f) return
+        callNameRaw = a.title
+        callNameShown = TextUtils.ellipsize(a.title, callNamePaint, callNameLen, TextUtils.TruncateAt.END).toString()
+        callNameOff = (callNameLen - callNamePaint.measureText(callNameShown)) / 2f
+    }
+
     private fun rebuildLiveTitle() {
         val a = liveCur ?: return
+        if (ringing) rebuildCallName(a)
         val call = a.kind == LiveActivity.Kind.CALL
         val avail = if (call) liveCallLen else liveTitleLen
         val raw = if (a.chronoBase != 0L) {
@@ -1498,8 +1574,67 @@ class EdgeView(ctx: Context) : View(ctx) {
         liveTitleOff = (avail - liveTitlePaint.measureText(liveTitleShown)) / 2f
     }
 
+    /** The big ringing view: name on the arc, pulsing ring, answer (green) and decline (red) discs. */
+    private fun drawCall(c: Canvas, a: LiveActivity) {
+        val s = callSize
+        val w = min(wS.value, hS.value)
+        val f = ((w - idle) / max(s - idle, 1f)).coerceIn(0f, 1f)
+        val over = ((s * 1.35f - max(wS.value, hS.value)) / (s * 0.35f)).coerceIn(0f, 1f)
+        val la = f * f * (3f - 2f * f) * over
+        if (la <= 0.01f) return
+        val ai = (255f * la + 0.5f).toInt()
+        val phase = (SystemClock.uptimeMillis() % 1300L) / 1300f
+        c.save()
+        c.translate(width.toFloat(), height.toFloat())
+        val ps = press.value * (w / s).coerceIn(0.5f, 1.15f)
+        c.scale(ps, ps)
+        // pulsing ring along the rim
+        val r = sr(s - dp(5f))
+        liveOval.set(-r, -r, r, r)
+        arcPaint.strokeWidth = sw(dp(4f))
+        arcPaint.color = C_GREEN
+        arcPaint.alpha = (255f * (0.25f + 0.45f * (1f - phase)) * la + 0.5f).toInt()
+        c.drawArc(liveOval, 180f + SL_A0, SL_A1 - SL_A0, false, arcPaint)
+        // caller name on the arc
+        callNamePaint.color = ink
+        callNamePaint.alpha = ai
+        if (callNameShown.isNotEmpty()) arcText(c, callNameShown, callPathName, callNameOff, callNamePaint)
+        if (a.answer != null) {
+            // expanding halo, then the green disc
+            arcPaint.strokeWidth = sw(dp(2f))
+            arcPaint.color = C_GREEN
+            arcPaint.alpha = (255f * 0.5f * (1f - phase) * la + 0.5f).toInt()
+            c.drawCircle(callAnsX, callAnsY, callBtnR + dp(10f) * phase, arcPaint)
+            fill.color = C_GREEN
+            fill.alpha = ai
+            c.drawCircle(callAnsX, callAnsY, callBtnR, fill)
+            val ic = icon(R.drawable.ic_phone, false)
+            ic.bounds = callAnsRect
+            ic.setTint(Color.WHITE)
+            ic.alpha = ai
+            drawIc(c, ic)
+            ic.setTint(ink)
+        }
+        if (a.decline != null) {
+            fill.color = C_DECLINE
+            fill.alpha = ai
+            c.drawCircle(callDecX, callDecY, callBtnR, fill)
+            val ic = icon(R.drawable.ic_phone_off, false)
+            ic.bounds = callDecRect
+            ic.setTint(Color.WHITE)
+            ic.alpha = ai
+            drawIc(c, ic)
+            ic.setTint(ink)
+        }
+        c.restore()
+    }
+
     private fun drawLive(c: Canvas) {
         val a = liveCur ?: return
+        if (ringing) {
+            drawCall(c, a)
+            return
+        }
         val s = liveSize
         val w = min(wS.value, hS.value)
         val f = ((w - idle) / max(s - idle, 1f)).coerceIn(0f, 1f)
@@ -1586,15 +1721,20 @@ class EdgeView(ctx: Context) : View(ctx) {
         if (a.kind != LiveActivity.Kind.CALL) return 0
         val px = x - width
         val py = y - height
-        val hr = dp(18f)
+        val big = ringing
+        val hr = if (big) callHitR else dp(18f)
+        val ax = if (big) callAnsX else liveAnsX
+        val ay = if (big) callAnsY else liveAnsY
+        val bx = if (big) callDecX else liveDecX
+        val by = if (big) callDecY else liveDecY
         if (a.answer != null) {
-            val dx = px - liveAnsX
-            val dy = py - liveAnsY
+            val dx = px - ax
+            val dy = py - ay
             if (dx * dx + dy * dy <= hr * hr) return 1
         }
         if (a.decline != null) {
-            val dx = px - liveDecX
-            val dy = py - liveDecY
+            val dx = px - bx
+            val dy = py - by
             if (dx * dx + dy * dy <= hr * hr) return 2
         }
         return 0
@@ -1781,7 +1921,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     private fun layoutAll() {
         // generous node bounds; the node clip lives in the node's own (unrotated) space, so rotating a page can never cut it
         nodeS = ceil(rad).toInt() + ceil(dp(8f)).toInt()
-        beanPx = ceil(idle * LIVE_SCALE).toInt() + ceil(dp(4f)).toInt()
+        beanPx = ceil(max(idle * LIVE_SCALE, callSize)).toInt() + ceil(dp(4f)).toInt()
         for (w in order) w.dirty = true
         val hw = min(dp(24.5f), 0.12f * rad - dp(1.5f)).coerceAtLeast(dp(12f))
         val brad = min(dp(20f), hw - dp(2f))
@@ -1799,7 +1939,9 @@ class EdgeView(ctx: Context) : View(ctx) {
             w.layout(hw, brad)
         }
         layoutLive()
+        layoutCall()
         liveTitleRaw = null
+        callNameRaw = null
         rebuildLiveTitle()
     }
 
@@ -1828,6 +1970,26 @@ class EdgeView(ctx: Context) : View(ctx) {
         val gh = dp(4.5f).toInt()
         liveAnsRect.set(liveAnsX.toInt() - gh, liveAnsY.toInt() - gh, liveAnsX.toInt() + gh, liveAnsY.toInt() + gh)
         liveDecRect.set(liveDecX.toInt() - gh, liveDecY.toInt() - gh, liveDecX.toInt() + gh, liveDecY.toInt() + gh)
+    }
+
+    /** Geometry of the ringing view: decline near the bottom edge, answer near the side edge (mirrored by the canvas). */
+    private fun layoutCall() {
+        val s = callSize
+        val tr = s - dp(17f)
+        Geo.textArcPath(callPathName, xOval, tr, LV_A0 + 4f, LV_A1 - 4f)
+        callNameLen = tr * Math.toRadians((LV_A1 - LV_A0 - 8f).toDouble()).toFloat()
+        callBtnR = dp(25f)
+        callHitR = dp(28f)
+        val br = min(s * 0.62f, s - dp(56f)).coerceAtLeast(callBtnR * 2f)
+        val dA = Math.toRadians(24.0)
+        val aA = Math.toRadians(66.0)
+        callDecX = -br * cos(dA).toFloat()
+        callDecY = -br * sin(dA).toFloat()
+        callAnsX = -br * cos(aA).toFloat()
+        callAnsY = -br * sin(aA).toFloat()
+        val gh = dp(11f).toInt()
+        callAnsRect.set(callAnsX.toInt() - gh, callAnsY.toInt() - gh, callAnsX.toInt() + gh, callAnsY.toInt() + gh)
+        callDecRect.set(callDecX.toInt() - gh, callDecY.toInt() - gh, callDecX.toInt() + gh, callDecY.toInt() + gh)
     }
 
     private fun ensureResources() {

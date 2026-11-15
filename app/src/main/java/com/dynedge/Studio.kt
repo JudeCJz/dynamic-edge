@@ -164,6 +164,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         resumed = false
         beatDriver.stop()
         root.removeCallbacks(closePreview)
+        preview(Prefs.PREVIEW_NONE)
     }
 
     fun onDestroy() {
@@ -171,6 +172,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         Prefs.prefs(a).unregisterOnSharedPreferenceChangeListener(prefListener)
         root.removeCallbacks(flush)
         root.removeCallbacks(closePreview)
+        preview(Prefs.PREVIEW_NONE)
         beatDriver.stop()
     }
 
@@ -185,7 +187,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     private fun onPref(key: String?) {
         when (key) {
-            null, Prefs.KEY_PREVIEW, Prefs.KEY_PAUSE_ON, Prefs.KEY_PAUSE_APPS, Prefs.KEY_PAUSED_BY_GATE,
+            null, Prefs.KEY_PREVIEW, Prefs.KEY_PREVIEW_TS, Prefs.KEY_PAUSE_ON, Prefs.KEY_PAUSE_APPS, Prefs.KEY_PAUSED_BY_GATE,
             Prefs.KEY_PAUSED_PKG, Prefs.KEY_PAUSED_AT -> return
             Prefs.KEY_ACCENT -> {
                 needLook = true
@@ -436,7 +438,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             contentDescription = caption
             onStart = start
             onStop = stop
-            onChange = save
+            onChange = { v -> keepPreview(); save(v) }
         }
         val r = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -526,7 +528,15 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     /** Show the real overlay while the user works with a slider. */
     private fun preview(mode: String) {
         previewOpen = mode == Prefs.PREVIEW_OPEN
-        edit().putString(Prefs.KEY_PREVIEW, mode).apply()
+        previewMode = mode
+        edit().putString(Prefs.KEY_PREVIEW, mode).putLong(Prefs.KEY_PREVIEW_TS, System.currentTimeMillis()).apply()
+    }
+
+    private var previewMode = Prefs.PREVIEW_NONE
+
+    /** Keeps a running preview alive (the overlay drops it after 4 s without a refresh). */
+    private fun keepPreview() {
+        if (previewMode != Prefs.PREVIEW_NONE) edit().putLong(Prefs.KEY_PREVIEW_TS, System.currentTimeMillis()).apply()
     }
 
     /**
@@ -738,10 +748,42 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     /** "Live test": one row per dynamic effect; tap to play it on the real edge, tap again to stop. */
     private fun liveTestPanel(box: LinearLayout) {
-        box.addView(captionLine(R.drawable.ic_activity, "Live test"))
         val marks = HashMap<String, ImageView>()
+        val names = HashMap<String, String>()
+        val body = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val status = a.txt("Off", 15f, Skin.TEXT)
+        val chev = a.icon(R.drawable.ic_chevron_down, acc, 20)
+        var open = false
+        val head = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = a.dp(56)
+            setPadding(a.dp(8), 0, a.dp(4), 0)
+            isClickable = true
+            background = a.rippleBg()
+            contentDescription = "Live test"
+            setOnClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                open = !open
+                body.visibility = if (open) View.VISIBLE else View.GONE
+                chev.animate().rotation(if (open) 180f else 0f).setDuration(150L).start()
+            }
+            addView(a.icon(R.drawable.ic_activity, acc, 20), a.lp(a.dp(24), a.dp(24)))
+            addView(a.txt("Live test", 13f, Skin.TEXT_2), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
+            addView(View(a), a.lp(0, 1, 1f))
+            addView(status, a.lp(WRAP, WRAP).apply { leftMargin = a.dp(8) })
+            addView(chev, a.lp(a.dp(40), a.dp(24)))
+        }
+        box.addView(head)
+        box.addView(body)
         fun refresh() {
-            for ((id, m) in marks) m.setImageResource(if (LiveTest.isRunning(id)) R.drawable.ic_square else R.drawable.ic_play)
+            var running: String? = null
+            for ((id, m) in marks) {
+                val on = LiveTest.isRunning(id)
+                m.setImageResource(if (on) R.drawable.ic_square else R.drawable.ic_play)
+                if (on && running == null) running = names[id]
+            }
+            status.text = running ?: "Off"
         }
         val items = listOf(
             Triple(LiveTest.DL, "Download", R.drawable.ic_download),
@@ -782,10 +824,11 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             r.addView(a.txt(name, 15f, Skin.TEXT), a.lp(0, WRAP, 1f).apply { leftMargin = a.dp(14) })
             val m = a.icon(R.drawable.ic_play, acc, 20)
             marks[id] = m
+            names[id] = name
             r.addView(m, a.lp(a.dp(52), a.dp(24)))
-            box.addView(r)
+            body.addView(r)
         }
-        box.addView(linkRow(R.drawable.ic_x, "Stop all") { LiveTest.stopAll() })
+        body.addView(linkRow(R.drawable.ic_x, "Stop all") { LiveTest.stopAll() })
         LiveTest.listener = { refresh() }
         refresh()
     }
@@ -1189,31 +1232,25 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         box.addView(grid, a.lp(MATCH, WRAP))
 
         box.addView(slider(R.drawable.ic_maximize, "Icon size", Prefs.APPS_ICON_MIN, Prefs.APPS_ICON_MAX,
-            Prefs.appsIconDp(a), Prefs.APPS_ICON_DEF,
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            Prefs.appsIconDp(a), Prefs.APPS_ICON_DEF) {
             edit().putFloat(Prefs.KEY_APPS_ICON, it).apply()
         })
         box.addView(slider(R.drawable.ic_columns, "Spacing", Prefs.APPS_GAP_MIN, Prefs.APPS_GAP_MAX,
-            Prefs.appsGapDp(a), Prefs.APPS_GAP_DEF,
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            Prefs.appsGapDp(a), Prefs.APPS_GAP_DEF) {
             edit().putFloat(Prefs.KEY_APPS_GAP, it).apply()
         })
         box.addView(slider(R.drawable.ic_ring, "Inner ring", Prefs.RING_MIN, Prefs.RING_MAX,
-            Prefs.ringPct(a, Prefs.KEY_APPS_RING_IN), Prefs.RING_DEF,
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            Prefs.ringPct(a, Prefs.KEY_APPS_RING_IN), Prefs.RING_DEF) {
             edit().putFloat(Prefs.KEY_APPS_RING_IN, it).apply()
         })
         box.addView(slider(R.drawable.ic_ring, "Outer ring", Prefs.RING_MIN, Prefs.RING_MAX,
-            Prefs.ringPct(a, Prefs.KEY_APPS_RING_OUT), Prefs.RING_DEF,
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            Prefs.ringPct(a, Prefs.KEY_APPS_RING_OUT), Prefs.RING_DEF) {
             edit().putFloat(Prefs.KEY_APPS_RING_OUT, it).apply()
         })
-        box.addView(slider(R.drawable.ic_bean, "Icon roundness", 0f, 50f, Prefs.iconCorner(a).toFloat(), Prefs.ICON_CORNER_DEF.toFloat(),
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+        box.addView(slider(R.drawable.ic_bean, "Icon roundness", 0f, 50f, Prefs.iconCorner(a).toFloat(), Prefs.ICON_CORNER_DEF.toFloat()) {
             edit().putInt(Prefs.KEY_ICON_CORNER, Math.round(it)).apply()
         })
-        box.addView(slider(R.drawable.ic_grid, "Pixelate", 0f, 100f, Prefs.iconPixel(a).toFloat(), 0f,
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+        box.addView(slider(R.drawable.ic_grid, "Pixelate", 0f, 100f, Prefs.iconPixel(a).toFloat(), 0f) {
             edit().putInt(Prefs.KEY_ICON_PIXEL, Math.round(it)).apply()
         })
         box.addView(flagRow(R.drawable.ic_activity, "Recent apps", Prefs.KEY_APPS_RECENTS))
