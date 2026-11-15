@@ -606,7 +606,15 @@ class EdgeView(ctx: Context) : View(ctx) {
             return a != null && a.kind == LiveActivity.Kind.CALL && a.answer != null && liveWanted
         }
 
-    private fun closedSize(): Float = if (!liveWanted) idle else if (ringing) callSize else liveSize
+    /**
+     * The closed edge only grows for a ringing call or a timer that has gone off. Every other live activity (track
+     * change, charging, download, running timer, ongoing call, copied) is drawn compact inside the idle size, so
+     * the edge never pops bigger for a moment and never takes more touch space than usual.
+     */
+    private val liveBig: Boolean
+        get() = liveWanted && (ringing || liveCur?.key == TimerControl.KEY_DONE)
+
+    private fun closedSize(): Float = if (!liveWanted) idle else if (ringing) callSize else if (liveBig) liveSize else idle
 
     private val callNamePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -1637,7 +1645,9 @@ class EdgeView(ctx: Context) : View(ctx) {
         }
         val s = liveSize
         val w = min(wS.value, hS.value)
-        val f = ((w - idle) / max(s - idle, 1f)).coerceIn(0f, 1f)
+        val big = liveBig
+        // compact (idle-sized) activities show at once: the canvas scale below shrinks the live layout into the bean
+        val f = if (big) ((w - idle) / max(s - idle, 1f)).coerceIn(0f, 1f) else 1f
         // fade only with the morph from idle and while a bigger (opening / collapsing) panel covers the live
         // size; the live size itself is not "opening", so it must never dim the content
         val over = ((s * 1.35f - max(wS.value, hS.value)) / (s * 0.35f)).coerceIn(0f, 1f)
@@ -1683,7 +1693,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         // short title along the rim
         liveTitlePaint.color = ink
         liveTitlePaint.alpha = ai
-        if (liveTitleShown.isNotEmpty()) {
+        if (big && liveTitleShown.isNotEmpty()) {
             arcText(c, liveTitleShown, if (call) liveTitlePathCall else liveTitlePath, liveTitleOff, liveTitlePaint)
         }
         if (call) {
