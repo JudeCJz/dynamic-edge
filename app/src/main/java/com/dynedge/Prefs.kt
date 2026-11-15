@@ -26,15 +26,15 @@ object Prefs {
     const val KEY_APPS_GAP = "w_apps_gap"          // Float dp, space between icons and between rings (4..20, default 8)
     const val KEY_APPS_RECENTS = "w_apps_recents"  // Boolean, recent-apps ribbon on the APPS window (default true)
     const val KEY_APPS_RING_IN = "w_apps_ring_in"  // Float percent, APPS inner ring radius (60..100, default 100 = today's layout)
-    const val KEY_APPS_RING_OUT = "w_apps_ring_out" // Float percent, APPS outer ring radius (60..100, default 100)
-    const val KEY_QUICK_RING_IN = "w_quick_ring_in"  // Float percent, QUICK inner ring radius (60..140, default 100)
+    const val KEY_APPS_RING_OUT = "w_apps_ring_out" // Float percent, APPS outer ring radius (60..100, default 97)
+    const val KEY_QUICK_RING_IN = "w_quick_ring_in"  // Float percent, QUICK inner ring radius (60..140, default 112)
     const val KEY_QUICK_RING_OUT = "w_quick_ring_out" // Float percent, QUICK outer ring radius (60..100, default 100)
     const val KEY_MEDIA_ART = "w_media_art"        // Boolean, album art in the MEDIA circle (default true)
     const val KEY_MEDIA_SKIP = "w_media_skip"      // Boolean, previous / next buttons (default true)
     const val KEY_MEDIA_TEXT = "w_media_text"      // Boolean, title and artist arcs (default true)
     const val KEY_MEDIA_SEEK = "w_media_seek"      // Boolean, progress / seek arc and times (default true)
     const val KEY_CLIP_ROWS = "w_clip_rows"        // Int 1..5, clips shown in the CLIPBOARD window (default 5)
-    const val KEY_NOTIF_ROWS = "w_notif_rows"      // Int 1..5, notifications in the ALERTS window (default 5)
+    const val KEY_NOTIF_ROWS = "w_notif_rows"      // Int 1..4, notifications in the NOTIFICATIONS window (default 4)
     const val KEY_NOTIF_BODY = "w_notif_body"      // Boolean, grey body text after the title (default true)
     const val KEY_NOTIF_ICONS = "w_notif_icons"    // Boolean, app icons in front of each row (default true)
     const val KEY_TIMER_P = "w_timer_p"            // Int 1..60, + index 0..3: the four TIMER preset chips
@@ -55,8 +55,15 @@ object Prefs {
     const val RING_MAX = 100f          // APPS rings and the QUICK outer ring: already at the rim / slider clearance
     const val RING_IN_MAX = 140f       // QUICK inner ring has room to move out (clamped to outer - one tile)
 
+    const val QUICK_RING_IN_DEF = 112f  // the user's chosen QUICK ring layout (2026-11-16) is the default
+    const val QUICK_RING_OUT_DEF = 97f
+    fun ringDef(key: String): Float = when (key) {
+        KEY_QUICK_RING_IN -> QUICK_RING_IN_DEF
+        KEY_QUICK_RING_OUT -> QUICK_RING_OUT_DEF
+        else -> RING_DEF
+    }
     fun ringPct(ctx: Context, key: String, max: Float = RING_MAX): Float =
-        prefs(ctx).getFloat(key, RING_DEF).coerceIn(RING_MIN, max)
+        prefs(ctx).getFloat(key, ringDef(key)).coerceIn(RING_MIN, max)
 
     fun appsIconDp(ctx: Context): Float =
         prefs(ctx).getFloat(KEY_APPS_ICON, APPS_ICON_DEF).coerceIn(APPS_ICON_MIN, APPS_ICON_MAX)
@@ -290,27 +297,21 @@ object Prefs {
     const val HIDE_S_DEF = 5
     fun hideSeconds(ctx: Context): Int = prefs(ctx).getInt(KEY_HIDE_S, HIDE_S_DEF).coerceIn(1, 30)
 
+    // ---- blur: real backdrop blur behind the edge (Android 12+, only where the phone allows cross-window blur)
+    const val KEY_BLUR = "blur"                // Int 0..100, 0 = off (default)
+    fun blur(ctx: Context): Int = prefs(ctx).getInt(KEY_BLUR, 0).coerceIn(0, 100)
+    const val KEY_BLUR_OK = "blur_ok"          // written by the overlay: 0 unknown, 1 works, 2 not available here
+    fun blurOk(ctx: Context): Int = prefs(ctx).getInt(KEY_BLUR_OK, 0)
+
     // ---- pixel mode: the whole app drawn as pixel art
     const val KEY_PIXEL_MODE = "pixel_mode"    // Boolean (default false)
-    fun pixelMode(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_PIXEL_MODE, false) && !glass(ctx)
+    fun pixelMode(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_PIXEL_MODE, false)
     const val KEY_PIXEL_SIZE = "pixel_size"    // Float dp 1.5..6, size of one art pixel in pixel mode (default 3)
     const val PIXEL_SIZE_MIN = 1.5f
     const val PIXEL_SIZE_MAX = 6f
     const val PIXEL_SIZE_DEF = 3f
     fun pixelSizeDp(ctx: Context): Float = prefs(ctx).getFloat(KEY_PIXEL_SIZE, PIXEL_SIZE_DEF).coerceIn(PIXEL_SIZE_MIN, PIXEL_SIZE_MAX)
 
-    // ---- glass mode: translucent frosted body (exclusive with pixel mode)
-    const val KEY_GLASS = "glass"              // Boolean (default false)
-    const val KEY_GLASS_BLUR = "glass_blur"    // Int 0..100
-    const val KEY_GLASS_FROST = "glass_frost"  // Int 0..100, grain strength
-    const val KEY_GLASS_TINT = "glass_tint"    // Int 0..100, how much body colour shows
-    /** Written by the overlay: 0 unknown, 1 real backdrop blur works, 2 not available on this phone. */
-    const val KEY_GLASS_BLUR_OK = "glass_blur_ok"
-    fun glass(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_GLASS, false)
-    fun glassBlur(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_BLUR, 60).coerceIn(0, 100)
-    fun glassFrost(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_FROST, 40).coerceIn(0, 100)
-    fun glassTint(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_TINT, 35).coerceIn(0, 100)
-    fun glassBlurOk(ctx: Context): Int = prefs(ctx).getInt(KEY_GLASS_BLUR_OK, 0)
 
     /** Gradient colour 1: the hot core of the edge shape. 0 = Auto (follows the accent). */
     const val KEY_GRAD1 = "grad1"

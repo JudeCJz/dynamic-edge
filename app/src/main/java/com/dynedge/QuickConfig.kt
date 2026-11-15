@@ -5,24 +5,34 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.asin
+import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * Geometry of the QUICK window's two tile rings (0 inner, 1 outer), shared by the overlay (WinQuick), the editor
+ * Geometry of the QUICK window's two tile rings (0 inner, 1 outer), shared by the overlay (WinQuick) and the editor
  * preview (QuickEditorActivity), so both agree on slot positions.
  *
- * Each ring has a fixed number of evenly spaced slots between 12 and 78 degrees ([Win.slotAngle] with n = capacity).
- * The capacity is the largest slot count whose neighbouring centres are at least 44 dp apart (min touch target),
- * capped at [QuickConfig.RING_MAX]. The outer ring sits just inside the innermost slider arc; the inner ring keeps
- * clear of the close X and page dots.
+ * Honeycomb packing. The OUTER ring is the first row: [cap]1 slots evenly spread so its first and last centres sit at
+ * the same inset [inset] (chip + 6 dp + press ring) from the bottom and right edge, angle = asin(inset / ro). The
+ * INNER ring holds smaller tiles that sit in the gaps of the outer ring, on the bisector angles between outer tiles
+ * j and j + 1 (so at most cap1 - 1 tiles), at the radius where each is [outer chip + inner chip + 6 dp] from both
+ * outer neighbours. If the inner tiles would then touch each other (the inner circle is shorter than the outer one)
+ * they first shrink (down to 11 dp), and if that is not enough every second gap is used. Always symmetric about the
+ * 45 degree diagonal; the layout depends only on the capacity, never on how many tiles are placed.
  */
 internal class QuickGeom {
     var br = 0f       // chip radius before the per-ring clamp
     var ri = 0f       // inner ring radius
     var ro = 0f       // outer ring radius
+    var inset = 0f    // distance of the first/last outer centre (and the slider badge centres) from the bottom/right edge
     val cap = IntArray(2)
     val chip = FloatArray(2)   // chip radius per ring
     val arcR = FloatArray(2)   // slider arc radii (index 1 only with two arcs)
+    private var stride = 1     // inner tiles use every [stride]-th gap between outer tiles
+    private var outStep = 0.0  // outer angular step in degrees
+    private var outA0 = 12.0   // angle of the first outer tile in degrees
 
     fun ringR(r: Int): Float = if (r == 0) ri else ro
 
@@ -33,38 +43,73 @@ internal class QuickGeom {
         br = min(brad, 20f * d)
         val top = if (nArcs <= 0) min(0.94f * rad, rad - 8f * d)
         else arcR[if (nArcs >= 2) 1 else 0] - (ArcSet.STROKE_DP / 2f + 11f) * d // clear gap from the slider (user: tiles touched it)
-        ro = top - br
-        // close X (idle bean centroid) + page dots + half a touch target
-        val x = min(0.4244f * idlePx, 0.16f * rad) * 1.4142f
-        ri = max(0.40f * rad, x + 56f * d)
-        if (ro - ri < 44f * d) ri = ro - 44f * d
-        ri = ri.coerceAtLeast(br + 8f * d)
-        // user ring radius (percent; 100 = the layout above). Outer never goes past its slider clearance,
-        // inner keeps the close X clear and stays one tile (44 dp) inside the outer ring.
-        val roMax = ro
-        val riDef = ri
+        val roMax = top - br
+        // outer ring percent: 100 = the slider clearance limit
         ro = if (outPct >= 100f) roMax else max(roMax * outPct / 100f, min(roMax, br + 52f * d))
-        val riFloor = max(br + 8f * d, min(riDef, x + 40f * d))
-        ri = (riDef * inPct / 100f).coerceAtLeast(riFloor)
-        if (ro - ri < 44f * d) ri = (ro - 44f * d).coerceAtLeast(br + 8f * d)
-        // each ring gets its own angular window: margin = asin((chip + 6 dp + press ring) / r) so the full chip
-        // never touches the bottom or side edge; both windows are centred on 45 degrees, so the rings line up on
-        // the diagonal and the outer ring keeps room for more tiles than the inner one
-        for (r in 0..1) {
-            val rr = ringR(r).toDouble().coerceAtLeast(1.0)
-            val m = Math.toDegrees(kotlin.math.asin(((br + 9f * d) / rr).coerceAtMost(1.0))).coerceAtMost(40.0)
-            margin[r] = m.toFloat()
-            span[r] = 90.0 - 2.0 * m
-            cap[r] = capFor(rr.toFloat(), span[r], d)
-            chip[r] = chipFor(rr.toFloat(), cap[r], span[r], d)
-        }
+        inset = br + 9f * d
+        outA0 = Math.toDegrees(asin((inset / ro.coerceAtLeast(1f)).toDouble().coerceAtMost(1.0))).coerceAtMost(40.0)
+        val span = 90.0 - 2.0 * outA0
+        cap[1] = capFor(ro, span, d)
+        chip[1] = chipFor(ro, cap[1], span, d)
+        outStep = if (cap[1] <= 1) span else span / (cap[1] - 1)
+        // close X (idle bean centroid) + page dots
+        val x = min(0.4244f * idlePx, 0.16f * rad) * 1.4142f
+        val inFactor = inPct / Prefs.ringDef(Prefs.KEY_QUICK_RING_IN)  // 100 percent of the default = honeycomb radius
+        solveInner(x, d, inFactor)
     }
 
-    val margin = floatArrayOf(12f, 12f)   // degrees from each screen edge to the first/last slot, per ring
-    val span = doubleArrayOf(66.0, 66.0)  // 90 - 2 * margin, per ring
+    /** Fills ri / chip[0] / cap[0] / stride for the outer ring above. */
+    private fun solveInner(x: Float, d: Float, inFactor: Float) {
+        val m = max(cap[1] - 1, 1)   // gaps between outer tiles (one virtual gap when the outer ring holds a single tile)
+        val minChip = 11f * d
+        val base = max(minChip, 0.82f * chip[1])
+        var found = false
+        var s = 1
+        while (s <= 2 && !found) {
+            var c0 = base
+            while (c0 >= minChip - 0.01f) {
+                val r = innerRadius(s, c0, m, x, d, inFactor)
+                if (r > 0f) {
+                    ri = r; chip[0] = c0; stride = s; found = true
+                    break
+                }
+                c0 -= d
+            }
+            s++
+        }
+        if (!found) {
+            stride = 2
+            chip[0] = minChip
+            ri = max(0.5f * ro, x + minChip + 18f * d)
+        }
+        cap[0] = (m - 1) / stride + 1
+    }
 
-    /** Angle in degrees of slot [k] of [n] on ring [r]: evenly inside that ring's window (45 when n is 1). */
-    fun angle(r: Int, k: Int, n: Int): Float = if (n <= 1) 45f else margin[r] + (k * span[r] / (n - 1)).toFloat()
+    /** Honeycomb inner radius for stride [s] and chip [c0], or -1 when the inner tiles cannot fit without touching. */
+    private fun innerRadius(s: Int, c0: Float, m: Int, x: Float, d: Float, inFactor: Float): Float {
+        val half = Math.toRadians(outStep / 2.0)
+        val sh = ro * sin(half).toFloat()
+        val ch = ro * cos(half).toFloat()
+        val dd = chip[1] + c0 + 6f * d
+        val dmin = chip[1] + c0 + 2f * d
+        val honey = (ch - sqrt(max(0f, dd * dd - sh * sh))) * inFactor
+        var ceil = ch - sqrt(max(0f, dmin * dmin - sh * sh))
+        if (s > 1) ceil = min(ceil, ro - dmin)      // some inner tiles sit straight inside an outer tile
+        val c = (m - 1) / s + 1
+        val aFirst = (45.0 - (c - 1) / 2.0 * s * outStep).coerceAtLeast(5.0)
+        var floor = x + c0 + 18f * d                 // clear of the close X / page dots
+        floor = max(floor, (c0 + 6f * d) / sin(Math.toRadians(aFirst)).toFloat())   // clear of the bottom / side edge
+        if (c > 1) floor = max(floor, (2f * c0 + 3f * d) / (2f * sin(Math.toRadians(s * outStep / 2.0)).toFloat()))
+        if (floor > ceil + 0.5f) return -1f
+        return honey.coerceIn(floor, max(floor, ceil))
+    }
+
+    /** Angle in degrees of slot [k] of ring [r]. Outer: evenly between the equal insets. Inner: in the outer gaps. */
+    fun angle(r: Int, k: Int): Float {
+        if (r == 1) return if (cap[1] <= 1) 45f else (outA0 + k * outStep).toFloat()
+        val c = cap[0]
+        return (45.0 + (k - (c - 1) / 2.0) * stride * outStep).toFloat()
+    }
 
     private fun capFor(r: Float, span: Double, d: Float): Int {
         var n = QuickConfig.RING_MAX

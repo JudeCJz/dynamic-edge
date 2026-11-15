@@ -452,7 +452,7 @@ class Tiles(private val ctx: Context, private val onChange: () -> Unit) {
             "caffeine" -> "Caffeine"
             "screenshot" -> "Shot"
             "lock" -> "Lock"
-            "notifications" -> "Alerts"
+            "notifications" -> "Notifications"
             "quick_settings" -> "Settings"
             "recents" -> "Recents"
             "power_menu" -> "Power"

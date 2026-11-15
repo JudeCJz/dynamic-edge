@@ -66,7 +66,7 @@ object WindowsConfig {
         "apps" -> "Apps"
         "clipboard" -> "Clipboard"
         "timer" -> "Timer"
-        "notifications" -> "Alerts"
+        "notifications" -> "Notifications"
         "device" -> "Device"
         else -> id
     }

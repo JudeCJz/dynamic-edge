@@ -112,7 +112,7 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
 
     private fun slotValid(i: Int): Boolean = slotId[i] != null
 
-    /** Per ring: slots up to the last shown tile; the shown tiles spread evenly over the whole ring window. */
+    /** Per ring: slots up to the last shown tile. */
     private val shownN = IntArray(2)
 
     override fun layout(hw: Float, brad: Float) {
@@ -121,13 +121,13 @@ internal class WinQuick(h: EdgeView) : Win(h, "quick", ITEMS) {
             Prefs.ringPct(h.context, Prefs.KEY_QUICK_RING_IN, Prefs.RING_IN_MAX), Prefs.ringPct(h.context, Prefs.KEY_QUICK_RING_OUT))
         applyModel()
         for (r in 0..1) {
-            val n = shownN[r]
-            for (k in 0 until n) {
+            // honeycomb slots depend on the capacity only, exactly like the editor preview
+            for (k in 0 until shownN[r]) {
                 val i = r * QuickConfig.RING_MAX + k
-                place(i, geom.ringR(r), geom.angle(r, k, n), geom.chip[r])
+                place(i, geom.ringR(r), geom.angle(r, k), geom.chip[r])
             }
         }
-        arcSet.layout(geom.arcR, geom.margin[1])
+        arcSet.layout(geom.arcR, geom.inset)
         if (started) {
             refreshTiles()
             arcSet.refresh()

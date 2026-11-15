@@ -547,29 +547,16 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             Prefs.KEY_ACCENT_SAVED, Prefs.accent(a)))
         box.addView(swatchStrip(R.drawable.ic_droplet, "Body colour", Prefs.BASE_PRESETS, Prefs.KEY_BASE,
             Prefs.KEY_BASE_SAVED, Prefs.base(a)))
-        val gl = Prefs.glass(a)
-        val glassBox = LinearLayout(a).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = if (gl) View.VISIBLE else View.GONE
-        }
-        box.addView(toggleRow(R.drawable.ic_layers, "Glass", gl) { v ->
-            val e = edit().putBoolean(Prefs.KEY_GLASS, v)
-            if (v) e.putBoolean(Prefs.KEY_PIXEL_MODE, false)
-            e.apply()
-            glassBox.visibility = if (v) View.VISIBLE else View.GONE
-            if (v) a.recreate()
-        })
-        fun gs(res: Int, cap: String, key: String, v: Int, def: Int) = slider(res, cap, 0f, 100f, v.toFloat(), def.toFloat(),
+        // real backdrop blur where the phone allows it; Opacity sets how much of it shows through the body
+        box.addView(slider(R.drawable.ic_droplet, "Blur", 0f, 100f, Prefs.blur(a).toFloat(), 0f,
             start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
-            edit().putInt(key, it.toInt()).apply()
-        }
-        glassBox.addView(gs(R.drawable.ic_droplet, "Blur", Prefs.KEY_GLASS_BLUR, Prefs.glassBlur(a), 60))
-        if (Prefs.glassBlurOk(a) == 2) {
-            glassBox.addView(a.txt("Blur not available on this phone", 12f, Skin.TEXT_2).apply {
+            edit().putInt(Prefs.KEY_BLUR, it.toInt()).apply()
+        })
+        if (Prefs.blurOk(a) == 2) {
+            box.addView(a.txt("Blur not available on this phone", 12f, Skin.TEXT_2).apply {
                 setPadding(a.dp(8), 0, a.dp(8), a.dp(6))
             })
         }
-        box.addView(glassBox)
     }
 
     /** Opens the picker; the colour applies live and is saved to the strip when the picker closes. */
@@ -1146,7 +1133,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     }
 
     private fun rowsSlider(key: String): View {
-        val mx = if (key == Prefs.KEY_NOTIF_ROWS) 5 else 4
+        val mx = 4
         return         slider(R.drawable.ic_layers, "Rows", 1f, mx.toFloat(), Prefs.rows(a, key, mx).toFloat(), mx.toFloat()) {
             edit().putInt(key, Math.round(it).coerceIn(1, mx)).apply()
         }
@@ -1376,9 +1363,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
         // the very bottom: the whole app as pixel art
         box.addView(toggleRow(R.drawable.ic_grid, "Pixel mode", Prefs.pixelMode(a)) { v ->
-            val e = edit().putBoolean(Prefs.KEY_PIXEL_MODE, v)
-            if (v) e.putBoolean(Prefs.KEY_GLASS, false)
-            e.apply()
+            edit().putBoolean(Prefs.KEY_PIXEL_MODE, v).apply()
             a.recreate()
         })
         if (Prefs.pixelMode(a)) {

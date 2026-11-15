@@ -443,48 +443,36 @@ class EdgeView(ctx: Context) : View(ctx) {
     private val unitPath = Path()
     private var gradScale = 1f
     private val gradMatrix = Matrix()
-    private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        shader = shapeShader
-    }
-    // ---- glass mode (see Glass.kt): real blur behind (where the phone allows it) + a plain clear smoke body
-    private var glassOn = false
-    private var glassBlurPx = 0
-    private val glassBlur = GlassBlur(this)
-    private val glassFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private fun applyGlassLooks(ctx: Context) {
-        glassOn = Prefs.glass(ctx)
-        if (!glassOn) {
-            glassBlur.release()
-            return
+    // ---- blur (Glass.kt): the real cross-window blur behind the body; with it on, Opacity fades only the body
+    // (paint alpha) instead of the whole view, because a view layer would hide the blur
+    private val backBlur = GlassBlur(this)
+    private var blurPx = 0
+    private val blurLive: Boolean get() = blurPx > 0 && backBlur.active && !hidden
+
+    private fun applyBlur(ctx: Context) {
+        blurPx = (dp(Prefs.blur(ctx) * 0.5f)).toInt()
+        if (blurPx > 0) {
+            if (viewAttached) backBlur.ensure(ctx)
+        } else {
+            backBlur.release()
         }
-        glassBlurPx = (dp(Prefs.glassBlur(ctx) * 0.5f)).toInt()
-        if (viewAttached) glassBlur.ensure(ctx)
-        applyGlassFill()
+        applyOpacity(Prefs.opacityPct(ctx))
     }
 
-    /** Tint alpha: without the real blur the body gets denser so the content stays readable. */
-    private fun applyGlassFill() {
-        // plain clear glass: a neutral smoke so content stays readable, never coloured by the body or accent
-        val a = if (glassBlur.active && glassBlurPx > 0) 0.18f else 0.42f
-        glassFill.color = (255f * a + 0.5f).toInt() shl 24
-    }
-
-    private fun updateGlassBlur() {
-        if (!glassOn || hidden || opacityPct < 100 || glassBlurPx <= 0 || !glassBlur.active) return
+    private fun updateBlur() {
         val dw = drawW; val dh = drawH
         val r = min(dw, dh)
         val tip = min(gTip, 0.4f * r)
         val w = width; val h = height
         val top = (h - dh).toInt()
-        if (mirror) {
-            glassBlur.update(0, top, dw.toInt(), h, 0f, r, 0f, tip, glassBlurPx)
-        } else {
-            glassBlur.update((w - dw).toInt(), top, w, h, r, 0f, tip, 0f, glassBlurPx)
-        }
+        if (mirror) backBlur.update(0, top, dw.toInt(), h, 0f, r, 0f, tip, blurPx)
+        else backBlur.update((w - dw).toInt(), top, w, h, r, 0f, tip, 0f, blurPx)
     }
 
-    /** Frost grain, rim darkening, lens band, specular rim and chromatic fringe over the shape fill. */
+    private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        shader = shapeShader
+    }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         shader = glowShader
@@ -906,7 +894,7 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     /** Stops listeners and callbacks; call before removing the view for good. */
     fun release() {
-        glassBlur.release()
+        backBlur.release()
         if (framePosted) {
             Choreographer.getInstance().removeFrameCallback(frameCb)
             framePosted = false
@@ -973,7 +961,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         viewAttached = true
-        if (glassOn) { glassBlur.ensure(context); applyGlassFill() }
+        if (blurPx > 0 && backBlur.ensure(context)) applyOpacity(opacityPct)
         applySwipeSens()
         try {
             Prefs.prefs(context).registerOnSharedPreferenceChangeListener(sensListener)
@@ -1118,6 +1106,7 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     private fun applyLooksNow() {
         val c = context
+        applyBlur(c)
         if (PixelMode.on(c)) {
             pixelCell = PixelMode.cellPx(c)
             snapCell = PixelLayer.cellInt(pixelCell).toFloat()
@@ -1170,7 +1159,6 @@ class EdgeView(ctx: Context) : View(ctx) {
         gradientActive = gradOn && gradientPct > 0 && (baseColor and 0xFFFFFF) == 0
         shapePaint.shader = if (gradientActive) shapeShader else null
         shapePaint.color = baseColor
-        applyGlassLooks(c)
         glowPaint.shader = glowShader
         corePaint.shader = coreShader
         ringPaint.color = accent
@@ -1234,6 +1222,12 @@ class EdgeView(ctx: Context) : View(ctx) {
     /** Overlay opacity: one hardware layer with one alpha (never per paint); no layer at 100%. */
     private fun applyOpacity(pct: Int) {
         opacityPct = pct
+        if (blurPx > 0 && backBlur.active) {
+            // blur on: no view layer; the body paint carries the opacity so the blur shows through it
+            if (layerType != LAYER_TYPE_NONE) setLayerType(LAYER_TYPE_NONE, null)
+            invalidate()
+            return
+        }
         if (pct >= 100) {
             if (layerType != LAYER_TYPE_NONE) setLayerType(LAYER_TYPE_NONE, null)
         } else {
@@ -2284,9 +2278,9 @@ class EdgeView(ctx: Context) : View(ctx) {
     /** All drawing, in the logical right-corner frame; on the left side the canvas is mirrored once, here. */
     private fun drawAll(c: Canvas) {
         buildLivePath()
-        if (glassOn) {
-            updateGlassBlur()
-            if (glassBlur.active && glassBlurPx > 0 && !hidden && opacityPct >= 100) glassBlur.draw(c)
+        if (blurLive) {
+            updateBlur()
+            backBlur.draw(c)
         }
         if (mirror) {
             c.save()
@@ -2294,7 +2288,7 @@ class EdgeView(ctx: Context) : View(ctx) {
             c.scale(-1f, 1f)
         }
         // preview backdrop: a quarter disc that fits inside the window, so it never ends in a cut edge
-        if (backdropOn && !glassOn) c.drawCircle(width.toFloat(), height.toFloat(), min(width, height) - 1f, backdropPaint)
+        if (backdropOn) c.drawCircle(width.toFloat(), height.toFloat(), min(width, height) - 1f, backdropPaint)
         buildLivePath()
         val g = glow
         drawShapeFill(c, g)
@@ -2325,14 +2319,20 @@ class EdgeView(ctx: Context) : View(ctx) {
         c.save()
         c.translate(width.toFloat(), height.toFloat())
         c.scale(gradScale, gradScale)
-        c.drawPath(unitPath, if (glassOn) glassFill else shapePaint)
-        if (glowOn && g > 0.01f && !glassOn) {
+        if (blurLive) {
+            shapePaint.alpha = (255f * min(opacityPct, 85) / 100f + 0.5f).toInt()
+            c.drawPath(unitPath, shapePaint)
+            shapePaint.alpha = 255
+        } else {
+            c.drawPath(unitPath, shapePaint)
+        }
+        if (glowOn && g > 0.01f) {
             glowPaint.alpha = (255f * g + 0.5f).toInt()
             c.drawPath(unitPath, glowPaint)
         }
         c.restore()
         val b = if (beatOn) bassS else 0f
-        if (gradientActive && b > 0.01f && !glassOn) {
+        if (gradientActive && b > 0.01f) {
             // The core is a radial fade that ends fully transparent inside the shape, so it needs no clip.
             val sz = min(drawW, drawH)
             val coreR = min(sz * 0.8f * (1f + 0.35f * b), sz * 1.02f)

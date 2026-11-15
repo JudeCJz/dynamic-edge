@@ -84,31 +84,32 @@ internal class ArcSet(
     }
 
     /**
-     * Radii in px (outermost first); consecutive radii must differ by at least 2 * badgeR + 3 dp. Every arc starts
-     * on ONE line: the same start angle (and so the same mirrored end angle), with all badges centred on one
-     * radial line at that angle, just clear of the bottom edge.
+     * Radii in px (outermost first); consecutive radii must differ by at least 2 * badgeR + 3 dp.
+     * [inset] >= 0 (QUICK): every badge centre sits [inset] px above the bottom edge (badge angle = asin(inset / r)),
+     * the same line as the bottom-most outer tile, and the arc ends on the mirrored angle (90 - badge angle), the
+     * same vertical line as the top-most tile. [inset] < 0: all arcs share one start angle just clear of the edge.
      */
-    fun layout(radii: FloatArray, edgeA: Float = -1f) {
+    fun layout(radii: FloatArray, inset: Float = -1f) {
         val sunR = badgeR
         tol = h.dp(14f)
         var rmin = Float.MAX_VALUE
         for (k in 0 until n) rmin = min(rmin, radii[k])
         if (n == 0) return
-        // [edgeA] >= 0 (QUICK): the badge sits on the first tile's radial line and the arc ends on the last tile's,
-        // so the slider spans exactly the same angles as the tile rings (symmetric about the 45 degree diagonal)
-        val badgeMin = Math.toDegrees(asin(((sunR + h.dp(4f)) / rmin).toDouble().coerceAtMost(1.0))).toFloat()
-        val badgeA = if (edgeA >= 0f) max(badgeMin, edgeA) else badgeMin
-        val sunHalf = Math.toDegrees(asin((sunR / rmin).toDouble().coerceAtMost(1.0))).toFloat()
-        // the round cap reaches half a stroke past the arc's start: keep it clear of the badge too
-        val capHalf = Math.toDegrees(asin((h.dp(STROKE_DP) / 2f / rmin).toDouble().coerceAtMost(1.0))).toFloat()
-        val start = badgeA + sunHalf + 2f + capHalf
-        val ba = Math.toRadians(badgeA.toDouble())
         for (k in 0 until n) {
             val rr = h.sr(radii[k])
+            val rk = if (inset >= 0f) rr else rmin
+            val badgeMin = Math.toDegrees(asin(((sunR + h.dp(4f)) / rk).toDouble().coerceAtMost(1.0))).toFloat()
+            val badgeA = if (inset >= 0f)
+                max(badgeMin, Math.toDegrees(asin((inset / rk).toDouble().coerceAtMost(1.0))).toFloat()) else badgeMin
+            val sunHalf = Math.toDegrees(asin((sunR / rk).toDouble().coerceAtMost(1.0))).toFloat()
+            // the round cap reaches half a stroke past the arc's start: keep it clear of the badge too
+            val capHalf = Math.toDegrees(asin((h.dp(STROKE_DP) / 2f / rk).toDouble().coerceAtMost(1.0))).toFloat()
+            val start = badgeA + sunHalf + 2f + capHalf
+            val ba = Math.toRadians(badgeA.toDouble())
             r[k] = rr
             oval[k].set(-rr, -rr, rr, rr)
             a0[k] = start
-            a1[k] = if (edgeA >= 0f) Win.mirror(badgeA) else Win.mirror(start)
+            a1[k] = if (inset >= 0f) Win.mirror(badgeA) else Win.mirror(start)
             bx[k] = -rr * cos(ba).toFloat()
             by[k] = -rr * sin(ba).toFloat()
             val sh = (sunR * 0.6f).toInt()

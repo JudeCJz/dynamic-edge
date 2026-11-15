@@ -10,8 +10,7 @@ import kotlin.math.min
  *
  * Polar frame with the origin at the screen corner, angles in degrees from the bottom edge (0) to the right
  * edge (90). The apps sit evenly spaced on concentric rings, every ring symmetric about the 45 degree diagonal.
- * Rings are filled from the outermost ring inward; an app goes to the ring with the most arc per app left, so
- * outer rings hold more apps than inner ones. App order: innermost ring first, each ring from 0 toward 90 deg.
+ * Honeycomb packing: the outermost ring is the first row; each ring inward sits in the gaps of the ring outside it. App order: innermost ring first, each ring from 0 toward 90 deg.
  * Every icon is turned so its "up" points away from the corner along its radius: rotation = angle - 90.
  * If the rings cannot hold every app at the chosen icon size, the icons shrink (1 dp steps, down to 12 dp).
  */
@@ -85,80 +84,119 @@ internal object AppRing {
     /**
      * @param n apps to place; @param rad open radius px; @param itemR0 wanted icon radius px; @param gap gap px
      * between icons and between rings; @param ribbon the recent-apps ribbon is on; @param d density.
+     *
+     * Honeycomb: ring 0 (outermost, at the rim / ribbon clearance) is the first row, its icons evenly spread between
+     * equal insets from both edges. Each further ring sits in the gaps of the ring outside it: icons on the bisector
+     * angles (one fewer icon), at the radius where every icon is 2 * itemR + gap from both neighbours outside:
+     * r = R cos(s/2) - sqrt(D^2 - (R sin(s/2))^2), R = outer ring radius, s = its angular step, D = 2 * itemR + gap.
+     * Rings shorter than the one outside would make neighbours touch; then every second (third) gap is used.
      */
     fun compute(out: Out, n: Int, rad: Float, itemR0: Float, gap: Float, ribbon: Boolean, d: Float) {
         val cnt = min(n, out.r.size)
         out.n = cnt
         out.itemR = itemR0
         if (cnt <= 0) return
-        val ring = FloatArray(8)
-        val cap = IntArray(8)
-        val use = IntArray(8)
+        val rr = FloatArray(8)    // ring radius, outermost first
+        val rn = IntArray(8)      // lattice capacity of the ring
+        val rs = FloatArray(8)    // angular step of the ring in degrees
         var itemR = itemR0
         var rings = 0
         while (true) {
             val rMax = if (ribbon) ribbonR(rad, d) - RIB_ICON_DP * d - gap - itemR
             else rad - 8f * d - itemR
             val rMin = max(0.34f * rad, 50f * d + itemR)
-            val step = 2f * itemR + gap
-            rings = 0
-            var total = 0
-            var rc = rMax
-            while (rc >= rMin - 0.5f && rings < ring.size) {
-                ring[rings] = rc
-                rings++
-                rc -= step
-            }
-            if (rings == 0) {
-                ring[0] = max(rMax, rMin)
-                rings = 1
-            }
-            // one shared angular window for every ring: the innermost ring has the widest margin
-            val win = 90f - 2f * margin(ring[rings - 1], itemR, d)
-            for (i in 0 until rings) {
-                cap[i] = capacity(win, ring[i], itemR, gap)
-                total += cap[i]
+            val dd = 2f * itemR + gap
+            rings = 1
+            rr[0] = max(rMax, rMin)
+            val win0 = 90f - 2f * margin(rr[0], itemR, d)
+            rn[0] = capacity(win0, rr[0], itemR, gap)
+            rs[0] = if (rn[0] > 1) win0 / (rn[0] - 1) else 0f
+            var total = rn[0]
+            while (rings < rr.size) {
+                val p = rings - 1
+                val m = rn[p] - 1
+                if (m < 1) break
+                val half = Math.toRadians(rs[p] / 2.0)
+                val sh = rr[p] * Math.sin(half).toFloat()
+                val ch = rr[p] * Math.cos(half).toFloat()
+                val rHex = ch - Math.sqrt(max(0f, dd * dd - sh * sh).toDouble()).toFloat()
+                var done = false
+                for (s in 1..3) {
+                    val r = if (s > 1) min(rHex, rr[p] - dd) else rHex
+                    if (r < rMin) break
+                    var c = (m - 1) / s + 1
+                    val step = s * rs[p]
+                    if (c > 1 && 2f * r * Math.sin(Math.toRadians(step / 2.0)).toFloat() < dd - 0.5f) continue
+                    // keep the first / last icon clear of the screen edges (drop two at a time: stays symmetric)
+                    while (c > 0) {
+                        val aFirst = 45.0 - (c - 1) / 2.0 * step
+                        if (r * Math.sin(Math.toRadians(aFirst.coerceAtLeast(1.0))).toFloat() >= itemR + MARGIN_DP * d) break
+                        c -= 2
+                    }
+                    if (c <= 0) continue
+                    rr[rings] = r
+                    rn[rings] = c
+                    rs[rings] = step
+                    total += c
+                    rings++
+                    done = true
+                    break
+                }
+                if (!done) break
             }
             if (total >= cnt || itemR <= 12f * d) break
             itemR -= d
         }
         out.itemR = itemR
+        val dd = 2f * itemR + gap
+        val rMin = max(0.34f * rad, 50f * d + itemR)
         // fewest rings from the outermost inward that hold every app
         var k = 0
         var sum = 0
         while (k < rings && sum < cnt) {
-            sum += cap[k]
+            sum += rn[k]
             k++
         }
-        // greedy: the next app goes to the ring with the most arc per app after adding it
-        for (i in 0 until k) use[i] = 0
-        for (j in 0 until cnt) {
-            var best = -1
-            var bestV = -1f
-            for (i in 0 until k) {
-                if (use[i] >= cap[i]) continue
-                val v = ring[i] / (use[i] + 1)
-                if (v > bestV) {
-                    bestV = v
-                    best = i
-                }
-            }
-            if (best < 0) break
-            use[best]++
-        }
-        // assign: innermost ring first, each ring from low to high angle, centred on 45 in the shared window
-        val span = 90f - 2f * margin(ring[k - 1], itemR, d)
         var idx = 0
+        if (k <= 1) {
+            // all in the first row: evenly spread between equal insets (single app on the diagonal)
+            val c = min(cnt, rn[0].coerceAtLeast(1))
+            val win0 = 90f - 2f * margin(rr[0], itemR, d)
+            val step = if (c > 1) win0 / (c - 1) else 0f
+            for (j in 0 until c) {
+                val a = 45f + (j - (c - 1) / 2f) * step
+                out.r[idx] = rr[0]
+                out.ang[idx] = a
+                out.rot[idx] = a - 90f
+                idx++
+            }
+            out.n = idx
+            return
+        }
+        // innermost ring first, each ring from low to high angle; only the last (innermost) used ring may be partial
+        var left = cnt
+        val used = IntArray(k)
+        for (i in 0 until k - 1) {
+            used[i] = rn[i]
+            left -= rn[i]
+        }
+        used[k - 1] = left.coerceIn(0, rn[k - 1])
         for (i in k - 1 downTo 0) {
-            val c = use[i]
+            val c = used[i]
             if (c == 0) continue
-            val rc = ring[i]
-            val minStep = minStep(rc, itemR, gap)
-            val step = if (c <= 1) 0f else min(span / (c - 1), max(90f / (c + 1), minStep))
+            var r = rr[i]
+            var step = rs[i]
+            if (c != rn[i] && (rn[i] - c) % 2 != 0) {
+                // off the lattice (half a step): sit straight inside the ring outside, clear of its icons
+                r = max(min(r, rr[i - 1] - dd), rMin)
+                val ms = minStep(r, itemR, gap)
+                step = max(step, ms)
+                if (c > 1) step = min(step, (90f - 2f * margin(r, itemR, d)) / (c - 1))
+            }
             for (j in 0 until c) {
                 if (idx >= cnt) break
                 val a = 45f + (j - (c - 1) / 2f) * step
-                out.r[idx] = rc
+                out.r[idx] = r
                 out.ang[idx] = a
                 out.rot[idx] = a - 90f
                 idx++

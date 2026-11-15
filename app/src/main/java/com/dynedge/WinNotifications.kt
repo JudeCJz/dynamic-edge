@@ -50,13 +50,13 @@ internal class WinNotifications(h: EdgeView) : Win(h, "notifications", 5) {
     private val iconMatrix = Matrix()
 
     // window editor options (Prefs.KEY_NOTIF_*)
-    private var maxRows = 5
+    private var maxRows = 4
     private var optBody = true
     private var optIcons = true
 
     override fun layout(hw: Float, brad: Float) {
         val ctx = h.context
-        maxRows = Prefs.rows(ctx, Prefs.KEY_NOTIF_ROWS, 5)
+        maxRows = Prefs.rows(ctx, Prefs.KEY_NOTIF_ROWS, 4)
         optBody = Prefs.flag(ctx, Prefs.KEY_NOTIF_BODY)
         optIcons = Prefs.flag(ctx, Prefs.KEY_NOTIF_ICONS)
         iconD = dp(16f)
@@ -93,6 +93,9 @@ internal class WinNotifications(h: EdgeView) : Win(h, "notifications", 5) {
     }
 
     /** Rows hug the outer layer: newest on the outermost ring, older ones step inward; pitch adapts to the count. */
+    private val a0 = FloatArray(5)
+    private val a1 = FloatArray(5)
+
     private fun placeRows() {
         val outer = rad - dp(24f)
         val inner = 0.30f * rad
@@ -101,11 +104,17 @@ internal class WinNotifications(h: EdgeView) : Win(h, "notifications", 5) {
         rowHalf = pitch / 2f
         iconD = min(dp(18f), pitch - dp(6f))
         textOff = if (optIcons) iconD + dp(8f) else 0f
+        // every row is symmetric about the 45 degree diagonal: it starts and ends the same distance from the
+        // bottom and the side edge (the icon's half size plus a margin), so text runs the full available arc
+        val e = iconD / 2f + dp(10f)
         for (k in 0 until 5) {
             rowR[k] = (outer - k * pitch).coerceAtLeast(dp(40f))
-            textArcPath(rowPath[k], rowR[k], A0, A1)
-            rowLen[k] = rowR[k] * Math.toRadians((A1 - A0).toDouble()).toFloat()
-            val ia = Math.toRadians((A0 + Math.toDegrees(((iconD / 2f + dp(1f)) / rowR[k]).toDouble())))
+            val ro0 = rowR[k] + dp(5f)
+            a0[k] = Math.toDegrees(kotlin.math.asin((e / ro0).coerceAtMost(0.7f).toDouble())).toFloat()
+            a1[k] = 90f - a0[k]
+            textArcPath(rowPath[k], rowR[k], a0[k], a1[k])
+            rowLen[k] = rowR[k] * Math.toRadians((a1[k] - a0[k]).toDouble()).toFloat()
+            val ia = Math.toRadians(a0[k].toDouble())
             val ro = rowR[k] + dp(5f)
             iconX[k] = -ro * cos(ia).toFloat()
             iconY[k] = -ro * sin(ia).toFloat()
@@ -186,7 +195,7 @@ internal class WinNotifications(h: EdgeView) : Win(h, "notifications", 5) {
                 ap.strokeWidth = h.sw(rowHalf * 2f)
                 ap.color = h.ink
                 ap.alpha = (255f * 0.10f * a + 0.5f).toInt()
-                c.drawArc(h.ovalScratch, 180f + A0 - 2f, A1 - A0 + 4f, false, ap)
+                c.drawArc(h.ovalScratch, 180f + a0[k] - 2f, a1[k] - a0[k] + 4f, false, ap)
             }
             val p = iconPaint[k]
             if (p.shader != null) {
@@ -205,9 +214,9 @@ internal class WinNotifications(h: EdgeView) : Win(h, "notifications", 5) {
     override fun hit(lx: Float, ly: Float): Int {
         beginHit()
         polar(lx, ly)
-        if (pa > A0 - 4f && pa < A1 + 4f) {
+        run {
             for (k in 0 until n) {
-                if (abs(pr - (rowR[k] + dp(5f))) < rowHalf) {
+                if (pa > a0[k] - 4f && pa < a1[k] + 4f && abs(pr - (rowR[k] + dp(5f))) < rowHalf) {
                     forceHit(k)
                     break
                 }

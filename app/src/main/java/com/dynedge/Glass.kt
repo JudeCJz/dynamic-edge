@@ -16,7 +16,7 @@ import java.util.Random
 /**
  * Glass mode helpers: the real backdrop blur (Android 12+ cross-window blur through the hidden
  * ViewRootImpl.createBackgroundBlurDrawable, reached by reflection) and the shared grain bitmap.
- * Log tag DynEdgeGlass. [Prefs.KEY_GLASS_BLUR_OK] mirrors the result for the settings app.
+ * Log tag DynEdgeGlass. [Prefs.KEY_BLUR_OK] mirrors the result for the settings app.
  */
 class GlassBlur(private val view: View) {
     private var drawable: Drawable? = null
@@ -127,7 +127,7 @@ class GlassBlur(private val view: View) {
         try {
             val p = Prefs.prefs(ctx)
             val v = if (ok) 1 else 2
-            if (p.getInt(Prefs.KEY_GLASS_BLUR_OK, 0) != v) p.edit().putInt(Prefs.KEY_GLASS_BLUR_OK, v).apply()
+            if (p.getInt(Prefs.KEY_BLUR_OK, 0) != v) p.edit().putInt(Prefs.KEY_BLUR_OK, v).apply()
         } catch (e: Throwable) {
         }
     }

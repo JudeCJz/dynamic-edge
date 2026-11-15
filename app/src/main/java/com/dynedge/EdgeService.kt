@@ -101,8 +101,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             Prefs.KEY_GRAD_ON, Prefs.KEY_GRAD1, Prefs.KEY_GRAD2, Prefs.KEY_TOUCH_SHOW,
             // pixel mode changes typefaces and stroke grids baked into the windows: rebuild the overlay window
             Prefs.KEY_PIXEL_MODE -> if (edge != null) { detachWindow(); attach() }
-            Prefs.KEY_PIXEL_SIZE, Prefs.KEY_GLASS_BLUR, Prefs.KEY_GLASS_FROST, Prefs.KEY_GLASS_TINT -> edge?.applyLooks()
-            Prefs.KEY_GLASS -> if (edge != null) { detachWindow(); attach() }
+            Prefs.KEY_PIXEL_SIZE, Prefs.KEY_BLUR -> edge?.applyLooks()
             Prefs.KEY_FLOAT, Prefs.KEY_FLOAT_GAP, Prefs.KEY_POS, Prefs.KEY_SIDE_LEFT -> applyPlacement()
             QuickConfig.KEY, ShortcutStore.KEY -> edge?.reloadQuick()
             WindowsConfig.KEY -> edge?.reloadWindows()

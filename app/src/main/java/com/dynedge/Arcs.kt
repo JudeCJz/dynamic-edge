@@ -198,7 +198,7 @@ class Arcs(ctx: Context, private val onChange: () -> Unit) {
             "media_volume" -> "Media"
             "ring_volume" -> "Ring"
             "alarm_volume" -> "Alarm"
-            "notification_volume" -> "Alerts"
+            "notification_volume" -> "Notification volume"
             "call_volume" -> "Call"
             else -> id
         }
