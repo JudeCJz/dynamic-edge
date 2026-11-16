@@ -7,17 +7,17 @@ import org.json.JSONObject
 /**
  * Data-driven list of panel windows: order and on/off, stored as JSON in Prefs.
  *
- * There are exactly seven windows. The settings screen lists them with a switch each; a row tap opens that
+ * There are exactly eight windows. The settings screen lists them with a switch each; a row tap opens that
  * window's editor (WindowEditActivity, or QuickEditorActivity for Quick).
  */
 object WindowsConfig {
     const val KEY = "windows"
 
     /** The only windows that exist, in page order. */
-    val ALL = listOf("quick", "media", "apps", "clipboard", "timer", "notifications", "device")
+    val ALL = listOf("quick", "media", "apps", "clipboard", "timer", "notifications", "device", "screenshots")
 
     /** Every one of them is on when the user has never chosen otherwise. */
-    val DEFAULT_ON: Set<String> = ALL.toSet()
+    val DEFAULT_ON: Set<String> = ALL.toSet() - "screenshots"
 
     data class Entry(val id: String, val on: Boolean)
 
@@ -68,6 +68,7 @@ object WindowsConfig {
         "timer" -> "Timer"
         "notifications" -> "Notifications"
         "device" -> "Device"
+        "screenshots" -> "Screenshots"
         else -> id
     }
 
@@ -79,6 +80,7 @@ object WindowsConfig {
         "timer" -> R.drawable.ic_timer
         "notifications" -> R.drawable.ic_bell
         "device" -> R.drawable.ic_cpu
+        "screenshots" -> R.drawable.ic_image
         else -> R.drawable.ic_sliders
     }
 }

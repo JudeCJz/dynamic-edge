@@ -66,33 +66,18 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
                     updateHidden()
                 }
                 Intent.ACTION_USER_PRESENT -> updateHidden()
-                Intent.ACTION_POWER_CONNECTED -> postCharging()
-                Intent.ACTION_POWER_DISCONNECTED -> {
-                    mainHandler.removeCallbacks(chargingRemove)
-                    LiveBus.remove("charging")
-                }
+                Intent.ACTION_POWER_CONNECTED -> pills.chargeStart()
+                Intent.ACTION_POWER_DISCONNECTED -> pills.chargeStop()
             }
         }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val chargingRemove = Runnable { LiveBus.remove("charging") }
+    private val pills = SystemPills(this) { screenOff }
 
-    private fun postCharging() {
-        if (!Prefs.live(this) || screenOff) return
-        val i = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val lv = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val sc = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-        val pct = if (lv >= 0 && sc > 0) (lv * 100 / sc) else 0
-        LiveBus.put(
-            LiveActivity(
-                "charging", LiveActivity.Kind.CHARGING, "$pct%", pct / 100f, 0L, false,
-                R.drawable.ic_bolt, false, null, null, null
-            )
-        )
-        mainHandler.removeCallbacks(chargingRemove)
-        mainHandler.postDelayed(chargingRemove, 3500L)
-    }
+    /** Edge hidden because another app is fullscreen (status bar window gone). */
+    private var fullscreen = false
+    private var sawStatusBar = false
 
     private var prefListenerRegistered = false
     // strong reference: SharedPreferences only holds listeners weakly
@@ -107,13 +92,14 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             Prefs.KEY_GRAD_ON, Prefs.KEY_GRAD1, Prefs.KEY_GRAD2, Prefs.KEY_TOUCH_SHOW,
             // pixel mode changes typefaces and stroke grids baked into the windows: rebuild the overlay window
             Prefs.KEY_PIXEL_MODE -> if (edge != null) { detachWindow(); attach() }
-            Prefs.KEY_PIXEL_SIZE -> edge?.applyLooks()
+            Prefs.KEY_PIXEL_SIZE, "idle_info", "fade_idle", "double_tap_back" -> edge?.applyLooks()
             // opacity slider: only the layer alpha changes, so the edge never flickers while sliding
             Prefs.KEY_OPACITY -> edge?.setOpacityPct(Prefs.opacityPct(this))
             Prefs.KEY_EDGE_ON -> applyEdgeOn()
             Prefs.KEY_FLOAT, Prefs.KEY_FLOAT_GAP, Prefs.KEY_FLOAT_CORNER, Prefs.KEY_POS, Prefs.KEY_SIDE_LEFT -> applyPlacement()
             QuickConfig.KEY, ShortcutStore.KEY -> edge?.reloadQuick()
             WindowsConfig.KEY -> edge?.reloadWindows()
+            "hide_fullscreen" -> updateHidden()
             Prefs.KEY_FLARE -> applyFlare()
             Prefs.KEY_PAUSE_ON, Prefs.KEY_PAUSE_APPS -> pauseSet = PauseGate.watchSet(this)
             Prefs.KEY_APPS, IconTheme.KEY, Prefs.KEY_ICON_CORNER, Prefs.KEY_ICON_PIXEL -> edge?.reloadWinPrefs()
@@ -406,6 +392,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             filter.addAction(Intent.ACTION_POWER_DISCONNECTED)
             registerReceiver(receiver, filter)
             receiverRegistered = true
+            pills.start()
         }
 
         screenOff = false
@@ -492,9 +479,32 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         try {
             val w = windows ?: return
             imeVisible = w.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            fullscreen = computeFullscreen(w)
         } catch (e: Exception) {
             Log.w(TAG, "window list unavailable", e)
         }
+    }
+
+    /**
+     * Another app is fullscreen when an application window is up but no system window (the status bar) sits at
+     * the top. Only trusted once a status bar window has been seen on this device, so a phone that never lists
+     * it cannot hide the edge for good.
+     */
+    private fun computeFullscreen(w: List<AccessibilityWindowInfo>): Boolean {
+        val r = android.graphics.Rect()
+        var bar = false
+        var app = false
+        for (x in w) {
+            when (x.type) {
+                AccessibilityWindowInfo.TYPE_SYSTEM -> {
+                    x.getBoundsInScreen(r)
+                    if (r.top <= 2 && r.height() > 0) bar = true
+                }
+                AccessibilityWindowInfo.TYPE_APPLICATION -> app = true
+            }
+        }
+        if (bar) sawStatusBar = true
+        return app && !bar && sawStatusBar
     }
 
     override fun onInterrupt() {
@@ -600,7 +610,10 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         val locked = km?.isKeyguardLocked ?: false
         if (locked || screenOff) closeClipPopup()
-        edge?.setHidden(imeVisible || locked || screenOff)
+        val top = LiveBus.top()
+        val ringing = top != null && top.kind == LiveActivity.Kind.CALL && top.answer != null
+        val fs = fullscreen && !ringing && Prefs.prefs(this).getBoolean("hide_fullscreen", true)
+        edge?.setHidden(imeVisible || locked || screenOff || fs)
     }
 
     private fun readTipRadius(): Float {
@@ -657,7 +670,11 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         mainHandler.removeCallbacks(attachRunnable)
         mainHandler.removeCallbacks(windowsRunnable)
         windowsPosted = false
-        mainHandler.removeCallbacks(chargingRemove)
+        try {
+            pills.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "pills stop failed", e)
+        }
         try {
             if (receiverRegistered) unregisterReceiver(receiver)
         } catch (e: Exception) {

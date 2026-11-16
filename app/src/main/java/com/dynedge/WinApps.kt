@@ -275,22 +275,18 @@ internal class WinApps(h: EdgeView) : Win(h, "apps", ITEMS) {
         return bestHit()
     }
 
-    override fun longPressable(item: Int): Boolean = item >= RIB0 && item < RIB0 + ribN
+    override fun longPressable(item: Int): Boolean =
+        (item >= RIB0 && item < RIB0 + ribN) || (appCount > 0 && item >= 0 && item < appCount)
 
-    /** Long-press on a ribbon app: stop it (background processes only, see [RecentApps.stop]) and drop it. */
+    /** Long-press on an app or a ribbon app: open it in a floating window. */
     override fun onLongPress(item: Int): Boolean {
-        val k = item - RIB0
-        if (k < 0 || k >= ribN) return false
-        val pkg = ribPkg[k] ?: return false
-        RecentApps.stop(h.context, pkg)
-        val keep = ArrayList<RecentApps.Item>(ribN)
-        for (j in 0 until ribN) {
-            val pj = ribPkg[j]
-            val bj = ribBmp[j]
-            if (j != k && pj != null && bj != null) keep.add(RecentApps.Item(pj, bj))
+        val ctx = h.context
+        if (item >= RIB0) {
+            val pkg = ribPkg.getOrNull(item - RIB0) ?: return false
+            return FreeformLaunch.launch(ctx, pkg)
         }
-        setRibbon(keep)
-        return false
+        val cn = Prefs.apps(ctx).getOrNull(item) ?: return false
+        return FreeformLaunch.launch(ctx, cn)
     }
 
     override fun onTap(item: Int) {

@@ -32,6 +32,7 @@ object Setup {
     )
 
     const val REQ_MIC = 41
+    const val REQ_PHOTOS = 42
 
     private var dialog: AlertDialog? = null
     private var col: LinearLayout? = null
@@ -60,6 +61,9 @@ object Setup {
         out.add(Step(R.drawable.ic_audio_lines, "Music visualiser",
             "Microphone permission, only to read the music level. Nothing is recorded.",
             false, { Perms.granted(it, android.Manifest.permission.RECORD_AUDIO) }, { askMic(it) }))
+        out.add(Step(R.drawable.ic_image, "Screenshots window",
+            "Photos permission, to show your latest screenshots in the panel.",
+            false, { Perms.granted(it, android.Manifest.permission.READ_EXTERNAL_STORAGE) }, { askPhotos(it) }))
         out.add(Step(R.drawable.ic_sliders, "Brightness slider",
             "Modify system settings, for the brightness arc.",
             false, { Settings.System.canWrite(it) },
@@ -161,6 +165,16 @@ object Setup {
         } catch (e: Exception) {
             Perms.open(a) { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }
         }
+    }
+
+    private fun askPhotos(a: Activity) {
+        val p = android.Manifest.permission.READ_EXTERNAL_STORAGE
+        if (Prefs.prefs(a).getBoolean("photos_asked", false) && !a.shouldShowRequestPermissionRationale(p)) {
+            Perms.open(a) { Perms.appDetails(a) }
+            return
+        }
+        Prefs.prefs(a).edit().putBoolean("photos_asked", true).apply()
+        a.requestPermissions(arrayOf(p), REQ_PHOTOS)
     }
 
     private fun askMic(a: Activity) {

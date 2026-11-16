@@ -165,8 +165,11 @@ class MediaListener : NotificationListenerService() {
             )
         }
 
+        // navigation, rides / deliveries, determinate progress, OTP (each switchable in prefs)
+        NotifLive.classify(this, sbn, key)?.let { return it }
+
         // PROGRESS
-        val max = ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        val max =ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
         if (max > 0 && ongoing && n.category != Notification.CATEGORY_TRANSPORT) {
             val indeterminate = ex.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
             val p = ex.getInt(Notification.EXTRA_PROGRESS, 0)

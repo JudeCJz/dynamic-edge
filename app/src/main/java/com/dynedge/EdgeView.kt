@@ -145,6 +145,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         "timer" -> WinTimer(this)
         "notifications" -> WinNotifications(this)
         "device" -> WinDevice(this)
+        "screenshots" -> WinScreenshots(this)
         else -> null
     }
 
@@ -597,6 +598,184 @@ class EdgeView(ctx: Context) : View(ctx) {
     private val transientRunnables = HashMap<String, Runnable>()
 
     private val liveSize: Float get() = idle * LIVE_SCALE
+
+    // ---- chips (live chip text, idle info), double-tap back, fade when idle: see EdgeExtras
+    private val chipPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create("sans-serif", Typeface.BOLD)
+    }
+    private val chipFm = Paint.FontMetrics()
+    private val chipFitLive = ChipFit()
+    private val chipFitCur = ChipFit()
+    private val chipFitPrev = ChipFit()
+    private var doubleTapBack = true
+    private var infoOn = false
+    private var infoShowing = false
+    private var infoCur = ""
+    private var infoPrev = ""
+    private var infoT0 = 0L
+    private var infoSource: IdleInfo? = null
+    private var fadeOn = false
+    private var fadeFrom = 1f
+    private var fadeTo = 1f
+    private var fadeT0 = 0L
+    private var tapPending = false
+    private var tapPx = 0f
+    private var tapPy = 0f
+
+    private val infoRunnable = object : Runnable {
+        override fun run() {
+            if (!infoWanted()) {
+                infoShowing = false
+                invalidateBean()
+                return
+            }
+            showNextInfo()
+            postDelayed(this, EdgeExtras.INFO_PERIOD_MS)
+        }
+    }
+    private val fadeRunnable = Runnable {
+        if (fadeOn && fadeIdleNow()) {
+            fadeFrom = fadeLevel()
+            fadeTo = EdgeExtras.FADE_LEVEL
+            fadeT0 = SystemClock.uptimeMillis()
+            invalidateBean()
+        } else {
+            fadeArm()
+        }
+    }
+    private val tapRunnable = Runnable {
+        tapPending = false
+        if (!expandedTarget && !gestureActive) onBeanTap(tapPx, tapPy)
+    }
+
+    private fun infoWanted(): Boolean =
+        infoOn && viewAttached && screenOn && !hidden && !svcHidden && !liveWanted && !musicPlaying
+
+    private fun showNextInfo() {
+        val src = infoSource ?: IdleInfo(context).also { infoSource = it }
+        val t = src.next()
+        if (infoShowing) {
+            infoPrev = infoCur
+        } else {
+            infoPrev = ""
+        }
+        infoCur = t
+        infoT0 = SystemClock.uptimeMillis()
+        infoShowing = true
+        invalidateBean()
+    }
+
+    private fun syncInfo() {
+        removeCallbacks(infoRunnable)
+        if (infoWanted()) {
+            if (!infoShowing) {
+                infoSource?.reset()
+                showNextInfo()
+            }
+            postDelayed(infoRunnable, EdgeExtras.INFO_PERIOD_MS)
+        } else if (infoShowing) {
+            infoShowing = false
+            invalidateBean()
+        }
+    }
+
+    private fun fadeIdleNow(): Boolean =
+        !liveWanted && !expandedTarget && !gestureActive && dragMode == 0 && progress < 0.01f
+
+    private fun fadeLevel(): Float {
+        if (!fadeOn) return 1f
+        val t = ((SystemClock.uptimeMillis() - fadeT0).toFloat() / EdgeExtras.FADE_MS).coerceIn(0f, 1f)
+        return fadeFrom + (fadeTo - fadeFrom) * t
+    }
+
+    /** Back to full alpha at once (touch, live activity, panel). */
+    private fun fadeWake() {
+        removeCallbacks(fadeRunnable)
+        if (fadeTo != 1f || fadeFrom != 1f) {
+            fadeFrom = 1f
+            fadeTo = 1f
+            invalidateBean()
+        }
+    }
+
+    /** Restarts the 5 s countdown to the faded state. */
+    private fun fadeArm() {
+        removeCallbacks(fadeRunnable)
+        if (fadeOn && viewAttached && screenOn) postDelayed(fadeRunnable, EdgeExtras.FADE_DELAY_MS)
+    }
+
+    private fun readExtraPrefs() {
+        val p = Prefs.prefs(context)
+        doubleTapBack = p.getBoolean(EdgeExtras.KEY_DOUBLE_TAP_BACK, true)
+        infoOn = p.getBoolean(EdgeExtras.KEY_IDLE_INFO, false)
+        fadeOn = p.getBoolean(EdgeExtras.KEY_FADE_IDLE, false)
+        chipFitLive.reset(); chipFitCur.reset(); chipFitPrev.reset()
+        chipPaint.typeface = Typeface.create(liveTitlePaint.typeface, Typeface.BOLD)
+        if (!doubleTapBack) {
+            removeCallbacks(tapRunnable)
+            tapPending = false
+        }
+        if (fadeOn) fadeArm() else fadeWake()
+        syncInfo()
+    }
+
+    /** Draws a centred chip at ([cx],[cy]); text shrinks until it fits [maxW]. */
+    private fun drawChip(c: Canvas, fit: ChipFit, s: String, cx: Float, cy: Float, base: Float, maxW: Float, alpha: Int) {
+        if (s.isEmpty() || alpha <= 0) return
+        chipPaint.textSize = fit.fit(chipPaint, s, base, maxW)
+        chipPaint.color = ink
+        chipPaint.alpha = alpha
+        chipPaint.getFontMetrics(chipFm)
+        text(c, s, cx, cy - (chipFm.ascent + chipFm.descent) / 2f, chipPaint)
+    }
+
+    /** The first tap of a possible double tap on the closed bean. */
+    private fun beanTapGate(x: Float, y: Float) {
+        if (tapPending) {
+            removeCallbacks(tapRunnable)
+            tapPending = false
+            switchToPreviousApp()
+            return
+        }
+        if (!doubleTapBack || expandedTarget || tapActsNow(x, y)) {
+            onBeanTap(x, y)
+            return
+        }
+        tapPending = true
+        tapPx = x
+        tapPy = y
+        postDelayed(tapRunnable, min(ViewConfiguration.getDoubleTapTimeout().toLong(), EdgeExtras.DOUBLE_TAP_MAX_MS))
+    }
+
+    /** True when the live activity has its own tap action that must run on the first tap. */
+    private fun tapActsNow(x: Float, y: Float): Boolean {
+        val a = liveCur
+        if (!liveWanted || a == null) return false
+        if (LiveTest.owns(a.key) || a.key == TimerControl.KEY_DONE) return true
+        if (liveDotHit(x, y) != 0) return true
+        return (a.kind == LiveActivity.Kind.CALL || a.tapOpens) && a.contentIntent != null
+    }
+
+    private fun switchToPreviousApp() {
+        val ctx = context.applicationContext
+        Thread {
+            val pkg = try { EdgeExtras.previousApp(ctx) } catch (e: Exception) { null }
+            post {
+                if (pkg != null && RecentApps.launch(context, pkg)) {
+                    haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                } else {
+                    val h = host
+                    if (h != null) {
+                        h.performAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
+                        postDelayed({ h.performAction(AccessibilityService.GLOBAL_ACTION_RECENTS) }, 150L)
+                        haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                    }
+                }
+            }
+        }.start()
+    }
+
     private val liveWanted: Boolean get() = liveOn && liveCur != null && screenOn && !hidden
 
     /** Larger "call" size of the closed bean while a call is ringing (about 2.7x idle, always inside the open panel). */
@@ -840,6 +1019,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         screenOn = on
         syncIdleServices()
         onLiveChanged()
+        if (fadeOn) fadeArm()
         syncShown()
     }
 
@@ -852,6 +1032,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     fun setHidden(h: Boolean) {
         svcHidden = h
         applyHidden()
+        syncInfo()
     }
 
     /** Long-press on the closed bean: it fades out for [Prefs.hideSeconds], then springs back. */
@@ -1027,6 +1208,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         LiveBus.onChange = { onLiveChanged() }
         LiveTest.view = this
         setClipListening(true)
+        readExtraPrefs()
         syncIdleServices()
         onLiveChanged()
     }
@@ -1042,6 +1224,11 @@ class EdgeView(ctx: Context) : View(ctx) {
         }
         removeCallbacks(longPressRunnable)
         removeCallbacks(captureTimeout)
+        removeCallbacks(infoRunnable)
+        removeCallbacks(fadeRunnable)
+        removeCallbacks(tapRunnable)
+        tapPending = false
+        infoShowing = false
         captureWanted = false
         stopVizLoop()
         collapseImmediately() // frame loop, springs, window sources, layers (display lists die with the window)
@@ -1222,6 +1409,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         press.stiffness = 700f * stiffScale
         for (w in order) w.dirty = true
         syncIdleServices()
+        readExtraPrefs()
         onLiveChanged()
         if (amountChanged && beatOn && !hidden) {
             // live feedback for the Bounce slider: kick the bean to the new amplitude, the spring settles it
@@ -1292,6 +1480,7 @@ class EdgeView(ctx: Context) : View(ctx) {
                     musicPlaying = pl || LiveTest.demoMusic
                     idlePlaying = musicPlaying && vizOn
                     updateViz()
+                    syncInfo()
                     invalidateBean()
                 }
                 w.onTrack = { t -> onTrackChanged(t) }
@@ -1448,6 +1637,18 @@ class EdgeView(ctx: Context) : View(ctx) {
         // while the visualizer draws on the bean, no idle design is drawn - only the visualizer
         if (vizOn && idlePlaying) {
             looks.drawViz(c, vizId, idle, false, visualizer.levels, ia, density)
+        } else if (infoShowing) {
+            val now = SystemClock.uptimeMillis()
+            val p = ((now - infoT0).toFloat() / EdgeExtras.INFO_FADE_MS).coerceIn(0f, 1f)
+            // the glyph fades out only while the first chip fades in; chip to chip is a plain cross-fade
+            if (infoPrev.isEmpty() && p < 1f) looks.drawIdle(c, idleId, idle, ia * (1f - p), if (beatOn) beat else 0f)
+            val cen = 0.4244f * idle
+            val base = sp(14f)
+            drawChip(c, chipFitCur, infoCur, -cen, -cen, base, cen * 1.7f, (255f * ia * p + 0.5f).toInt())
+            if (infoPrev.isNotEmpty() && p < 1f) {
+                drawChip(c, chipFitPrev, infoPrev, -cen, -cen, base, cen * 1.7f, (255f * ia * (1f - p) + 0.5f).toInt())
+            }
+            if (p < 1f) invalidateBean()
         } else {
             looks.drawIdle(c, idleId, idle, ia, if (beatOn) beat else 0f)
         }
@@ -1530,6 +1731,10 @@ class EdgeView(ctx: Context) : View(ctx) {
         syncClosedSize()
         updateViz()
         syncLiveTick()
+        if (fadeOn) {
+            if (liveWanted) fadeWake() else if (fadeTo == 1f) fadeArm()
+        }
+        syncInfo()
         invalidateBean()
     }
 
@@ -1727,7 +1932,12 @@ class EdgeView(ctx: Context) : View(ctx) {
             if (fr > 0.002f) c.drawArc(liveOval, 180f + A0, (A1 - A0) * fr.coerceAtMost(1f), false, arcPaint)
         }
         // icon at the centroid (an ongoing call shows its hang-up button there instead)
-        if (a.iconRes != 0 && !(call && a.decline != null)) {
+        if (a.chip.isNotEmpty() && !(call && a.decline != null)) {
+            // chip text where the icon goes, sized to read at idle size once the layout is scaled down
+            val cen = 0.4244f * s
+            val base = sp(14f) * (if (big) 1f else LIVE_SCALE)
+            drawChip(c, chipFitLive, a.chip, -cen, -cen, base, cen * 1.7f, ai)
+        } else if (a.iconRes != 0 && !(call && a.decline != null)) {
             val ic = icon(a.iconRes, false)
             ic.bounds = liveIconRect
             ic.alpha = ai
@@ -2533,6 +2743,19 @@ class EdgeView(ctx: Context) : View(ctx) {
             c.translate(width.toFloat(), 0f)
             c.scale(-1f, 1f)
         }
+        // fade when idle: the whole closed bean under one alpha layer (only while it is not fully opaque)
+        var fadeLayer = false
+        if (fadeOn && fadeIdleNow()) {
+            val fl = fadeLevel()
+            if (fl < 0.999f) {
+                c.saveLayerAlpha(
+                    (width - beanPx).toFloat(), (height - beanPx).toFloat(), width.toFloat(), height.toFloat(),
+                    (255f * fl + 0.5f).toInt()
+                )
+                fadeLayer = true
+                if (SystemClock.uptimeMillis() - fadeT0 < EdgeExtras.FADE_MS + 20L) invalidateBean()
+            }
+        }
         // preview backdrop: a quarter disc that fits inside the window, so it never ends in a cut edge
         if (backdropOn) c.drawCircle(width.toFloat(), height.toFloat(), min(width, height) - 1f, backdropPaint)
         buildLivePath()
@@ -2552,6 +2775,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         val a = contentAlpha
         if (a > 0.004f && vizOn && musicPlaying && vizRunning) drawOpenViz(c, a)
         if (a > 0.004f && resourcesReady) drawContent(c, a)
+        if (fadeLayer) c.restore()
         if (mirror) c.restore()
     }
 
@@ -2812,6 +3036,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         val ry = ev.rawY
         ensureResources()
         buildLivePath()
+        if (fadeOn) fadeWake()
         // the published touch region is the single hit shape (it already includes the flares, the bean slop and,
         // while closed, the invisible grab square - a DOWN there is handled exactly like one on the bean)
         if (!region.contains(ev.x.toInt(), y.toInt())) return false
@@ -3113,7 +3338,7 @@ class EdgeView(ctx: Context) : View(ctx) {
             finishDrag(if (cancel) 0f else vx, if (cancel) 0f else vy)
         } else if (startMode == MODE_IDLE) {
             press.target = 1f
-            if (!cancel && quick) onBeanTap(x, y)
+            if (!cancel && quick) beanTapGate(x, y)
         } else if (!cancel && !longFired && !moved && item >= 0 && hitItem(x, y) == item && hitWin === pw) {
             if (item == ID_X) {
                 startCollapse(false, 0f, 0f)
@@ -3124,6 +3349,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         updateViz()
         syncClosedSize()
         syncLiveTick()
+        if (fadeOn) fadeArm()
         invalidate()
         requestFrames()
     }

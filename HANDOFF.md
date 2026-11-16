@@ -86,6 +86,24 @@ page scrolled to that section); category pages are flat; the preview now draws a
 corner; "Themed" is now "Monochrome" and the App icons choice is also on the Apps page.
 Built but not checked on screen: DEVICE badges on one line with the battery badge, AppPickerActivity icons.
 
+## Status 2026-11-16 (Claude, v1.9.0 built + installed on vivo, committed, NOT released)
+Built by 4 Sonnet subagents in parallel (separate files), lead-reviewed. Settings: main page "Live and smart"
+drop-down (Studio.livePanel) with every switch below.
+- NotifLive.kt (+ OtpReceiver): navigation (live_nav), rides/deliveries (live_rides), any determinate progress
+  (live_progress), OTP chip, tap copies (live_otp; strict patterns only, removed after 60 s). Called from
+  MediaListener.classify after CALL/TIMER.
+- SystemPills.kt (from EdgeService): charging chip alternates time-to-full / watts (live_charge_detail), 80% pill
+  (live_charge80, off), pills for headphones (+earbud %), VPN, hotspot, low battery 15/5 (pill_*). Fullscreen
+  hide (hide_fullscreen) via accessibility windows, only after a status bar was seen once.
+- EdgeView + EdgeExtras.kt: LiveActivity.chip drawn instead of the icon; double-tap bean = previous app
+  (double_tap_back, default ON: single tap waits up to 220 ms); idle info chips every 6 s (idle_info, off);
+  fade when idle to 35 % after 5 s (fade_idle, off). LiveActivity.tapOpens -> tap sends contentIntent.
+- FreeformLaunch.kt: long-press an app (grid or recent ribbon) opens it in a freeform window (reflection
+  setLaunchWindowingMode(5)); needs freeform support, else normal launch + one toast. Ribbon "stop app" removed.
+- WinScreenshots.kt: new "screenshots" window (off by default), photos permission step in Setup.
+NOT tested on screen: phone was locked. A fake "Bank: Your OTP is 482913" shell notification was posted on
+the vivo for testing (user asked to swipe it away).
+
 ## Status 2026-11-16 12:20 (Claude, v1.8.1 released, signed)
 - Release signing: keystore/dynedge-release.jks + keystore.properties (both gitignored, password only in that
   file). app/build.gradle.kts uses them when present, else the debug key. BACK UP BOTH: losing them means friends

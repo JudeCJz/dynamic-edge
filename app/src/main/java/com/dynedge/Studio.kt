@@ -54,7 +54,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     private var gear: DotIcon? = null
 
     private val tabs: IntArray = when (mode) {
-        MODE_MAIN -> intArrayOf(T_COLOUR, T_SHAPE, T_LONG, T_WINDOWS, T_MUSIC, T_LOOKS)
+        MODE_MAIN -> intArrayOf(T_COLOUR, T_SHAPE, T_LONG, T_WINDOWS, T_LIVE, T_MUSIC, T_LOOKS)
         MODE_SETTINGS -> intArrayOf(T_MORE)
         else -> intArrayOf(T_EDIT)
     }
@@ -62,6 +62,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     private var acc = a.accentUi()
     /** Windows section drop-down state; kept across panel rebuilds (declared above init on purpose). */
     private var windowsOpen = false
+    private var liveOpen = false
     private var bottomInset = 0
     private var undoView: View? = null
     private var picking = false
@@ -470,6 +471,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             T_MORE -> morePanel(box)
             T_LOOKS -> savedLooksPanel(box)
             T_LONG -> longPressPanel(box)
+            T_LIVE -> livePanel(box)
             T_EDIT -> editorPanel(box)
         }
         return box
@@ -1127,6 +1129,58 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     // ---------------------------------------------------------------- Windows
 
     /** The windows: switch = on / off, row = that window's editor, grip = drag to reorder. */
+    /**
+     * "Live and smart": what the closed bean shows and how it behaves. A drop-down like Windows; every switch is a
+     * plain Boolean pref read by the overlay (keys owned by NotifLive, SystemPills and EdgeView).
+     */
+    private fun livePanel(box: LinearLayout) {
+        val list = LinearLayout(a).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (liveOpen) View.VISIBLE else View.GONE
+        }
+        fun sw(res: Int, caption: String, key: String, def: Boolean) {
+            list.addView(toggleRow(res, caption, Prefs.prefs(a).getBoolean(key, def)) { v ->
+                edit().putBoolean(key, v).apply()
+            })
+        }
+        sw(R.drawable.ic_navigation, "Navigation", "live_nav", true)
+        sw(R.drawable.ic_car, "Rides and deliveries", "live_rides", true)
+        sw(R.drawable.ic_download, "Any progress bar", "live_progress", true)
+        sw(R.drawable.ic_key, "OTP codes, tap to copy", "live_otp", true)
+        sw(R.drawable.ic_bolt, "Charging time and watts", "live_charge_detail", true)
+        sw(R.drawable.ic_battery_low, "Alert at 80% charge", "live_charge80", false)
+        sw(R.drawable.ic_headphones, "Headphones", "pill_headphones", true)
+        sw(R.drawable.ic_shield_check, "VPN", "pill_vpn", true)
+        sw(R.drawable.ic_hotspot, "Hotspot", "pill_hotspot", true)
+        sw(R.drawable.ic_battery_low, "Low battery", "pill_battery", true)
+        sw(R.drawable.ic_clock, "Idle info: time, battery, alarm, speed", "idle_info", false)
+        sw(R.drawable.ic_pointer, "Double-tap for previous app", "double_tap_back", true)
+        sw(R.drawable.ic_maximize, "Hide in fullscreen apps", "hide_fullscreen", true)
+        sw(R.drawable.ic_eye, "Fade when idle", "fade_idle", false)
+        val chev = a.icon(R.drawable.ic_chevron_down, acc, 20).apply { rotation = if (liveOpen) 180f else 0f }
+        val head = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = a.dp(56)
+            setPadding(a.dp(8), 0, a.dp(4), 0)
+            isClickable = true
+            background = a.rippleBg()
+            contentDescription = "Live and smart"
+            setOnClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                liveOpen = !liveOpen
+                list.visibility = if (liveOpen) View.VISIBLE else View.GONE
+                chev.animate().rotation(if (liveOpen) 180f else 0f).setDuration(180L).start()
+            }
+            addView(a.icon(R.drawable.ic_activity, acc, 20), a.lp(a.dp(24), a.dp(24)))
+            addView(a.txt("Live and smart", 15f, Skin.TEXT), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
+            addView(View(a), a.lp(0, 1, 1f))
+            addView(chev, a.lp(a.dp(40), a.dp(24)))
+        }
+        box.addView(head)
+        box.addView(list, a.lp(MATCH, WRAP))
+    }
+
     private fun windowsPanel(box: LinearLayout) {
         val list = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
@@ -1727,6 +1781,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         const val T_MORE = 6
         const val T_LOOKS = 8
         const val T_LONG = 9
+        const val T_LIVE = 10
         const val T_EDIT = 7
 
         /** Width of the caption column of slider rows (dp): every track starts at the same x. */

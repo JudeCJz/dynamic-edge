@@ -121,7 +121,7 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == Setup.REQ_MIC) Setup.refresh(this)
+        if (requestCode == Setup.REQ_MIC || requestCode == Setup.REQ_PHOTOS) Setup.refresh(this)
     }
 
     override fun onDestroy() {
