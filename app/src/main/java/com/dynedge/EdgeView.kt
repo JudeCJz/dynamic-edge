@@ -1630,8 +1630,8 @@ class EdgeView(ctx: Context) : View(ctx) {
         c.translate(width.toFloat(), height.toFloat())
         val ps = press.value * (w / s).coerceIn(0.5f, 1.15f)
         c.scale(ps, ps)
-        // pulsing ring along the rim
-        val r = sr(s - dp(5f))
+        // pulsing ring along the rim: same 7 dp track and inset as every live activity
+        val r = sr(s - dp(if (floatOn) 9f else 7f))
         liveOval.set(-r, -r, r, r)
         arcPaint.strokeWidth = sw(dp(7f))
         arcPaint.color = C_GREEN
@@ -1703,13 +1703,16 @@ class EdgeView(ctx: Context) : View(ctx) {
         val A0 = SL_A0 + trim
         val A1 = SL_A1 - trim
         liveOval.set(-r, -r, r, r)
-        arcPaint.strokeWidth = sw(dp(4f))
+        arcPaint.strokeWidth = sw(dp(7f))
         arcPaint.color = ink
         arcPaint.alpha = (255f * 0.24f * la + 0.5f).toInt()
-        c.drawArc(liveOval, 180f + A0, A1 - A0, false, arcPaint)
+        // a call has no progress: no empty track on the rim, just the hang-up button
+        if (!call) c.drawArc(liveOval, 180f + A0, A1 - A0, false, arcPaint)
         arcPaint.color = tint
         arcPaint.alpha = ai
-        if (a.progress == -2f) {
+        if (call) {
+            // nothing on the rim
+        } else if (a.progress == -2f) {
             val head = ((SystemClock.uptimeMillis() % 1400L) / 1400f) * (A1 - A0 + 24f)
             val st = max(0f, head - 24f)
             val en = min(A1 - A0, head)
@@ -1723,8 +1726,8 @@ class EdgeView(ctx: Context) : View(ctx) {
             }
             if (fr > 0.002f) c.drawArc(liveOval, 180f + A0, (A1 - A0) * fr.coerceAtMost(1f), false, arcPaint)
         }
-        // icon at the centroid
-        if (a.iconRes != 0) {
+        // icon at the centroid (an ongoing call shows its hang-up button there instead)
+        if (a.iconRes != 0 && !(call && a.decline != null)) {
             val ic = icon(a.iconRes, false)
             ic.bounds = liveIconRect
             ic.alpha = ai
@@ -1756,7 +1759,7 @@ class EdgeView(ctx: Context) : View(ctx) {
                 drawIc(c, ic)
             }
         }
-        if (liveSec != null) {
+        if (liveSec != null && !call) {
             val ang = Math.toRadians(if (floatOn) (A1 + 3f).toDouble() else 88.0)
             fill.color = ink
             fill.alpha = (255f * 0.7f * la + 0.5f).toInt()
@@ -2026,15 +2029,16 @@ class EdgeView(ctx: Context) : View(ctx) {
         val call0 = 28f
         Geo.textArcPath(liveTitlePathCall, xOval, tr, call0, LV_A1 - (call0 - LV_A0))
         liveCallLen = tr * Math.toRadians((LV_A1 - LV_A0 - 2f * (call0 - LV_A0)).toDouble()).toFloat()
-        liveDotR = dp(8f)
+        // ongoing call on the closed bean: one red hang-up button where the activity icon sits (the centroid),
+        // the same place and size as every other live icon, never on the rim track
+        liveDotR = dp(15f)
         val dr = s - dp(16f)
-        val dA = Math.toRadians(15.0)
         val aA = Math.toRadians(75.0)
-        liveDecX = -dr * cos(dA).toFloat()
-        liveDecY = -dr * sin(dA).toFloat()
+        liveDecX = -cen
+        liveDecY = -cen
         liveAnsX = -dr * cos(aA).toFloat()
         liveAnsY = -dr * sin(aA).toFloat()
-        val gh = dp(4.5f).toInt()
+        val gh = dp(8f).toInt()
         liveAnsRect.set(liveAnsX.toInt() - gh, liveAnsY.toInt() - gh, liveAnsX.toInt() + gh, liveAnsY.toInt() + gh)
         liveDecRect.set(liveDecX.toInt() - gh, liveDecY.toInt() - gh, liveDecX.toInt() + gh, liveDecY.toInt() + gh)
     }

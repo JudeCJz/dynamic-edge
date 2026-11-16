@@ -48,12 +48,12 @@ object Perms {
         return enabled.contains(cn.flattenToString()) || enabled.contains(cn.flattenToShortString())
     }
 
-    private fun mediaListenerEnabled(a: Context): Boolean {
+    fun mediaListenerEnabled(a: Context): Boolean {
         val enabled = Settings.Secure.getString(a.contentResolver, "enabled_notification_listeners") ?: return false
         return enabled.contains(a.packageName)
     }
 
-    private fun dndGranted(a: Context): Boolean {
+    fun dndGranted(a: Context): Boolean {
         val nm = a.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
         return nm.isNotificationPolicyAccessGranted
     }

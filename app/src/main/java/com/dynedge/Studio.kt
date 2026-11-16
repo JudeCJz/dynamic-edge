@@ -356,14 +356,13 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     private fun refreshStatus() {
         if (mode != MODE_MAIN) return
-        val missing = Perms.missing(a).size
+        // only what a person can fix on the phone counts (adb-only grants are optional extras)
+        val missing = Setup.pending(a)
         gear?.dot = missing > 0
         val (msg, action, click) = when {
-            !Perms.overlayEnabled(a) -> Triple("Overlay is off", "Turn on", {
-                Perms.open(a) { Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS) }
-            })
+            !Perms.overlayEnabled(a) -> Triple("Dyn Edge is not set up yet", "Set up", { Setup.show(a, acc) })
             !EdgeService.connected -> Triple("Overlay stopped", "Fix", { Perms.open(a) { Perms.appDetails(a) } })
-            missing > 0 -> Triple("Some permissions are missing", "Fix", { showMissing() })
+            missing > 0 -> Triple("Finish setting up", "Open", { Setup.show(a, acc) })
             else -> Triple("", "", {})
         }
         if (msg.isEmpty()) {

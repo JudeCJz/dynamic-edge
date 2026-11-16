@@ -86,6 +86,18 @@ page scrolled to that section); category pages are flat; the preview now draws a
 corner; "Themed" is now "Monochrome" and the App icons choice is also on the Apps page.
 Built but not checked on screen: DEVICE badges on one line with the battery badge, AppPickerActivity icons.
 
+## Status 2026-11-16 12:20 (Claude, v1.8.1 released, signed)
+- Release signing: keystore/dynedge-release.jks + keystore.properties (both gitignored, password only in that
+  file). app/build.gradle.kts uses them when present, else the debug key. BACK UP BOTH: losing them means friends
+  must uninstall to update. targetSdk stays 28 (user chose features over the "older Android" notice).
+- Setup.kt: first-run "Set up Dyn Edge" sheet (restricted settings hint on 13+, accessibility, battery, notif
+  access, mic runtime request, write settings, DND, usage). Opens once per app start while the edge is off;
+  banner opens it; adb-only grants (secure settings, assistant swipe) no longer count as missing.
+- Live bars: the 7 dp change had landed on the ringing ring only; now every live bar is 7 dp. Ongoing call =
+  one red hang-up button at the centroid, no rim track.
+- set_prefs hook takes set:a|b and long:N. Phone was uninstalled/reinstalled for the new signature; prefs were
+  restored from a dump (clipboard history lost).
+
 ## Status 2026-11-16 08:05 (Claude, v1.8.0 rebuilt + installed, not committed)
 Follow-ups on top of the 08:00 notes below:
 - Live test: starting one test stops any running one (one at a time).

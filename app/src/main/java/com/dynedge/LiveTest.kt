@@ -118,7 +118,8 @@ object LiveTest {
                 put(act("call_in", LiveActivity.Kind.CALL, "Test caller", -1f, R.drawable.ic_phone, answer = p, decline = p))
             }
             CALL_ON -> run(id, 15000L, "call_on") {
-                put(act("call_on", LiveActivity.Kind.CALL, "Test call", -1f, R.drawable.ic_phone, now, false))
+                put(act("call_on", LiveActivity.Kind.CALL, "Test call", -1f, R.drawable.ic_phone, now, false,
+                    decline = harmless(ctx)))
             }
             CHARGING -> run(id, 8000L, "charging") {
                 put(act("charging", LiveActivity.Kind.CHARGING, "87%", 0.87f, R.drawable.ic_bolt))

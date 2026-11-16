@@ -42,6 +42,9 @@ class MainActivity : Activity() {
                 val k = part.substring(0, i).trim()
                 val v = part.substring(i + 1).trim()
                 when {
+                    // typed values for a full settings restore: set:a|b|c (string set), long:123
+                    v.startsWith("set:") -> e.putStringSet(k, v.substring(4).split('|').filter { it.isNotEmpty() }.toSet())
+                    v.startsWith("long:") -> e.putLong(k, v.substring(5).toLongOrNull() ?: continue)
                     k == Prefs.KEY_IDLE_DP || k == Prefs.KEY_OPEN_DP || k == Prefs.KEY_FLARE ->
                         e.putFloat(k, v.toFloatOrNull() ?: continue)
                     v == "true" || v == "false" -> e.putBoolean(k, v == "true")
@@ -111,6 +114,14 @@ class MainActivity : Activity() {
         PauseGate.resumeNow(this)
         // permissions, apps and the service state may have changed while we were away
         studio?.onResume()
+        // first-run setup for friends without a computer: re-check the open sheet, or open it once while off
+        Setup.refresh(this)
+        if (studio != null) Setup.maybeAuto(this, accentUi())
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == Setup.REQ_MIC) Setup.refresh(this)
     }
 
     override fun onDestroy() {

@@ -30,12 +30,20 @@ No AndroidX, no Compose, and no work while idle. Made by Jude CJ.
 
 ## Install
 
-1. Download `DynEdge-v<version>.apk` from the [latest release](../../releases/latest) and install it.
-2. Open Dyn Edge and follow the permission banner. The edge itself is an accessibility service (it only
-   reads whether the keyboard is open). On Android 13 and later, sideloaded apps need
-   **App info > three-dot menu > Allow restricted settings** before the accessibility switch can be turned on.
-3. Optional extras: notification access (media and live activities), Do Not Disturb access, modify system
-   settings (brightness), microphone (music visualiser, the audio is never recorded or stored).
+1. On your phone, open the [latest release](../../releases/latest) and tap `DynEdge-v<version>.apk` to download it.
+2. Open the downloaded file. If the phone asks, allow your browser or Files app to install unknown apps.
+3. If Play Protect shows a warning, tap **More details > Install anyway**. It warns about every app installed
+   outside the Play Store. Dyn Edge is open source and signed by its author.
+4. Open Dyn Edge. A **Set up Dyn Edge** list walks you through each step in order and ticks them off:
+   - **Allow restricted settings** (Android 13 and later): in App info tap the three-dot menu, then
+     Allow restricted settings. Without this the accessibility switch stays greyed out.
+   - **Turn on Dyn Edge** in Accessibility. This is the only required step. Dyn Edge only checks whether
+     the keyboard is open, and never reads what is on screen.
+   - Optional: keep it running (battery), notification access (music and live activities), microphone
+     (visualiser only, nothing is recorded), brightness, Do Not Disturb and usage access.
+
+Updating: install the new APK over the old one, and your settings stay. Versions before 1.8.1 were signed
+differently, so uninstall those once before installing 1.8.1 or later.
 
 With a computer, `tools/install.ps1` installs the APK over adb and grants everything in one step.
 

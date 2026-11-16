@@ -1,5 +1,13 @@
+import java.util.Properties
+
 plugins {
   id("com.android.application")
+}
+
+// Release signing key: keystore.properties + keystore/ live next to the project and are never committed.
+val keyProps = Properties().apply {
+  val f = rootProject.file("keystore.properties")
+  if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -12,15 +20,31 @@ android {
     // Deliberately 28: keeps WifiManager.setWifiEnabled, BluetoothAdapter.enable/disable and the
     // hidden insets-listener API usable. See the dynamic-edge skill.
     targetSdk = 28
-    versionCode = 13
-    versionName = "1.8.0"
+    versionCode = 14
+    versionName = "1.8.1"
+  }
+
+  signingConfigs {
+    create("release") {
+      if (keyProps.getProperty("storeFile") != null) {
+        storeFile = rootProject.file(keyProps.getProperty("storeFile"))
+        storePassword = keyProps.getProperty("storePassword")
+        keyAlias = keyProps.getProperty("keyAlias")
+        keyPassword = keyProps.getProperty("keyPassword")
+        enableV1Signing = true
+        enableV2Signing = true
+        enableV3Signing = true
+      }
+    }
   }
 
   buildTypes {
     release {
       isMinifyEnabled = true
       isShrinkResources = true
-      signingConfig = signingConfigs.getByName("debug")
+      // the real release key when keystore.properties exists, else the debug key (local builds only)
+      signingConfig = if (keyProps.getProperty("storeFile") != null) signingConfigs.getByName("release")
+        else signingConfigs.getByName("debug")
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
