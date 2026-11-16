@@ -17,7 +17,11 @@ data class LiveActivity(
     val linked: Boolean = false,
     /** Linked timer that is paused: frozen at [remainingMs] (-1 = unknown). */
     val paused: Boolean = false,
-    val remainingMs: Long = -1L
+    val remainingMs: Long = -1L,
+    /** Short text (max ~7 chars, e.g. an OTP, "200 m", "5 min") drawn on the idle-sized bean instead of the icon. */
+    val chip: String = "",
+    /** Tapping the closed bean sends [contentIntent] (opens the app) instead of opening the panel. */
+    val tapOpens: Boolean = false
 ) {
     enum class Kind { CALL, TIMER, PROGRESS, CHARGING, MEDIA }
 }

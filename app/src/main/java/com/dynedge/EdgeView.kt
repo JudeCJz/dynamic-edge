@@ -1821,7 +1821,7 @@ class EdgeView(ctx: Context) : View(ctx) {
                 1 -> { haptic(HapticFeedbackConstants.VIRTUAL_KEY); sendPi(a.answer); return }
                 2 -> { haptic(HapticFeedbackConstants.VIRTUAL_KEY); sendPi(a.decline); return }
             }
-            if (a.kind == LiveActivity.Kind.CALL && a.contentIntent != null) {
+            if ((a.kind == LiveActivity.Kind.CALL || a.tapOpens) && a.contentIntent != null) {
                 haptic(HapticFeedbackConstants.VIRTUAL_KEY)
                 sendPi(a.contentIntent)
                 return
