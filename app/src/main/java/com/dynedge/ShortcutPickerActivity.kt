@@ -186,9 +186,15 @@ class ShortcutPickerActivity : Activity() {
     private fun runSearch() {
         val tokens = query.lowercase().split(' ', '-', '_').filter { it.isNotEmpty() }
         val out = ArrayList<Row>()
-        val settings = ShortcutCatalog.search(this, query).take(60)
-        if (settings.isNotEmpty()) out.add(Row(KIND_HEAD, "Settings", "", null, null))
-        for (e in settings) out.add(Row(ShortcutStore.KIND_SETTINGS, e.label, "", e, null))
+        val settings = ShortcutCatalog.search(this, query).take(300)
+        var lastGroup: String? = null
+        for (e in settings) {
+            if (e.group != lastGroup) {
+                lastGroup = e.group
+                out.add(Row(KIND_HEAD, e.group.ifEmpty { "Settings" }, "", null, null))
+            }
+            out.add(Row(ShortcutStore.KIND_SETTINGS, e.label, "", e, null))
+        }
         val matched = apps.filter { x -> tokens.all { x.lower.contains(it) } }.take(80)
         if (matched.isNotEmpty()) out.add(Row(KIND_HEAD, "Apps", "", null, null))
         for (a in matched) out.add(Row(ShortcutStore.KIND_APP, a.label, "", null, a))

@@ -92,7 +92,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             Prefs.KEY_GRAD_ON, Prefs.KEY_GRAD1, Prefs.KEY_GRAD2, Prefs.KEY_TOUCH_SHOW,
             // pixel mode changes typefaces and stroke grids baked into the windows: rebuild the overlay window
             Prefs.KEY_PIXEL_MODE -> if (edge != null) { detachWindow(); attach() }
-            Prefs.KEY_PIXEL_SIZE, "idle_info", "fade_idle", "double_tap_back" -> edge?.applyLooks()
+            Prefs.KEY_PIXEL_SIZE, "idle_info", "fade_idle", "double_tap_back", EdgeActions.KEY_DOUBLE_ACTION -> edge?.applyLooks()
             // opacity slider: only the layer alpha changes, so the edge never flickers while sliding
             Prefs.KEY_OPACITY -> edge?.setOpacityPct(Prefs.opacityPct(this))
             Prefs.KEY_EDGE_ON -> applyEdgeOn()

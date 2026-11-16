@@ -707,7 +707,7 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     private fun readExtraPrefs() {
         val p = Prefs.prefs(context)
-        doubleTapBack = p.getBoolean(EdgeExtras.KEY_DOUBLE_TAP_BACK, true)
+        doubleTapBack = EdgeActions.doubleAction(context) != EdgeActions.NONE
         infoOn = p.getBoolean(EdgeExtras.KEY_IDLE_INFO, false)
         fadeOn = p.getBoolean(EdgeExtras.KEY_FADE_IDLE, false)
         chipFitLive.reset(); chipFitCur.reset(); chipFitPrev.reset()
@@ -735,9 +735,14 @@ class EdgeView(ctx: Context) : View(ctx) {
         if (tapPending) {
             removeCallbacks(tapRunnable)
             tapPending = false
-            switchToPreviousApp()
+            val act = EdgeActions.doubleAction(context)
+            if (act != EdgeActions.NONE) {
+                haptic(HapticFeedbackConstants.CLOCK_TICK)
+                EdgeActions.run(this, act, true)
+            }
             return
         }
+        doubleTapBack = EdgeActions.doubleAction(context) != EdgeActions.NONE
         if (!doubleTapBack || expandedTarget || tapActsNow(x, y)) {
             onBeanTap(x, y)
             return
@@ -757,7 +762,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         return (a.kind == LiveActivity.Kind.CALL || a.tapOpens) && a.contentIntent != null
     }
 
-    private fun switchToPreviousApp() {
+    internal fun switchToPreviousApp() {
         val ctx = context.applicationContext
         Thread {
             val pkg = try { EdgeExtras.previousApp(ctx) } catch (e: Exception) { null }
@@ -1036,38 +1041,17 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     /** Long-press on the closed bean: it fades out for [Prefs.hideSeconds], then springs back. */
-    private fun hideForAwhile() {
+    internal fun hideForAwhile() {
         removeCallbacks(unhideRunnable)
         userHide = true
         applyHidden()
         postDelayed(unhideRunnable, Prefs.hideSeconds(context) * 1000L)
     }
 
-    /** Runs the user's long-press action ([Prefs.longAction]) for the closed bean. */
-    private fun runLongAction(act: String) {
-        val c = context
-        when (act) {
-            Prefs.LA_HIDE -> hideForAwhile()
-            Prefs.LA_SETTINGS -> try {
-                c.startActivity(Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } catch (e: Exception) {
-            }
-            Prefs.LA_NOTIFICATIONS -> host?.performAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
-            Prefs.LA_QUICK_SETTINGS -> host?.performAction(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
-            Prefs.LA_RECENTS -> host?.performAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
-            Prefs.LA_LOCK -> host?.performAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
-            Prefs.LA_SCREENSHOT -> host?.performAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
-            Prefs.LA_POWER -> host?.performAction(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
-            Prefs.LA_TORCH -> toggleTorchOnce()
-            Prefs.LA_ASSISTANT -> AssistControl.launch(c)
-            Prefs.LA_TILE -> runLongTile(Prefs.longTile(c))
-        }
-    }
-
     private var longTiles: Tiles? = null
 
     /** Runs one Quick tile from the long press (same routing as tapping it in the QUICK window). */
-    private fun runLongTile(id: String) {
+    internal fun runLongTile(id: String) {
         if (id.isEmpty()) return
         val t = longTiles ?: Tiles(context) {}.also { longTiles = it }
         t.service = service
@@ -1075,7 +1059,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     /** Flips the torch the way the QUICK torch tile does (CameraManager.setTorchMode on the flash camera). */
-    private fun toggleTorchOnce() {
+    internal fun toggleTorchOnce() {
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
         var id: String? = null
         try {
@@ -3360,9 +3344,9 @@ class EdgeView(ctx: Context) : View(ctx) {
             if (expandedTarget || dragMode != 0 || moved) return
             longFired = true
             val act = Prefs.longAction(context)
-            if (act == Prefs.LA_NONE) return
+            if (act == EdgeActions.NONE) return
             haptic(HapticFeedbackConstants.LONG_PRESS)
-            runLongAction(act)
+            EdgeActions.run(this, act, false)
             return
         }
         val item = pressed

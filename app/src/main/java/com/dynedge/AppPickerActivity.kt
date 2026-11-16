@@ -35,8 +35,11 @@ class AppPickerActivity : Activity() {
         const val EXTRA_MODE = "mode"
         const val MODE_PAUSE = "pause"
         const val EXTRA_REPLACE_IDX = "replace_idx"
+        /** Pick one app and store its component string in this pref key (gesture "Open app"). */
+        const val EXTRA_PREF_KEY = "pref_key"
 
         fun pauseIntent(c: Context): Intent = Intent(c, AppPickerActivity::class.java).putExtra(EXTRA_MODE, MODE_PAUSE)
+        fun prefIntent(c: Context, key: String): Intent = Intent(c, AppPickerActivity::class.java).putExtra(EXTRA_PREF_KEY, key)
         fun replaceIntent(c: Context, idx: Int): Intent = Intent(c, AppPickerActivity::class.java).putExtra(EXTRA_REPLACE_IDX, idx)
     }
 
@@ -96,7 +99,7 @@ class AppPickerActivity : Activity() {
                 v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
                 WindowInsets.CONSUMED
             }
-            addView(topBar(if (multi) "Pause in apps" else "Add app") { finish() }, lp(MATCH, WRAP))
+            addView(topBar(if (multi) "Pause in apps" else if (intent.hasExtra(EXTRA_PREF_KEY)) "Choose app" else "Add app") { finish() }, lp(MATCH, WRAP))
             if (multi) {
                 addView(searchBox(), lp(MATCH, WRAP))
                 addView(View(this@AppPickerActivity).apply { setBackgroundColor(accent) }, lp(MATCH, dp(2)).apply {
@@ -134,6 +137,12 @@ class AppPickerActivity : Activity() {
             if (!chosen.remove(item.pkg)) chosen.add(item.pkg)
             Prefs.setPauseApps(this, chosen)
             if (row != null) bind(row, item) else adapter.notifyDataSetChanged()
+            return
+        }
+        val prefKey = intent.getStringExtra(EXTRA_PREF_KEY)
+        if (prefKey != null) {
+            Prefs.prefs(this).edit().putString(prefKey, item.cn.flattenToString()).apply()
+            finish()
             return
         }
         val cur = Prefs.apps(this)

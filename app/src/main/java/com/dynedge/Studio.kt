@@ -53,8 +53,11 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     private var bannerClick: () -> Unit = {}
     private var gear: DotIcon? = null
 
+    /** Whether the Long press / Double tap drop-downs are open (kept across panel rebuilds). */
+    private val gestureOpen = BooleanArray(2)
+
     private val tabs: IntArray = when (mode) {
-        MODE_MAIN -> intArrayOf(T_COLOUR, T_SHAPE, T_LONG, T_WINDOWS, T_LIVE, T_MUSIC, T_LOOKS)
+        MODE_MAIN -> intArrayOf(T_COLOUR, T_SHAPE, T_LONG, T_DOUBLE, T_WINDOWS, T_LIVE, T_MUSIC, T_LOOKS)
         MODE_SETTINGS -> intArrayOf(T_MORE)
         else -> intArrayOf(T_EDIT)
     }
@@ -201,6 +204,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             rebuildPanel(T_WINDOWS)
             rebuildPanel(T_EDIT)
             rebuildPanel(T_MORE)
+            rebuildPanel(T_LONG)
+            rebuildPanel(T_DOUBLE)
         }
         resumed = true
         syncBeat()
@@ -470,7 +475,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             T_MOTION -> motionPanel(box)
             T_MORE -> morePanel(box)
             T_LOOKS -> savedLooksPanel(box)
-            T_LONG -> longPressPanel(box)
+            T_LONG -> longPressPanel(box, false)
+            T_DOUBLE -> longPressPanel(box, true)
             T_LIVE -> livePanel(box)
             T_EDIT -> editorPanel(box)
         }
@@ -825,25 +831,48 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         box.addView(corner)
     }
 
-    /** Long press on the closed edge: its own box on the main page. */
-    private fun longPressPanel(box: LinearLayout) {
+    /** Long press / double tap on the closed edge: each its own box on the main page. */
+    private fun longPressPanel(box: LinearLayout, double: Boolean) {
+        val gi = if (double) 1 else 0
+        val title = if (double) "Double tap" else "Long press"
+        val cur0 = EdgeActions.action(a, double)
         val hide = slider(R.drawable.ic_clock, "Hide time", 1f, 30f, Prefs.hideSeconds(a).toFloat(), Prefs.HIDE_S_DEF.toFloat()) {
             edit().putInt(Prefs.KEY_HIDE_S, Math.round(it)).apply()
         }
-        hide.visibility = if (Prefs.longAction(a) == Prefs.LA_HIDE) View.VISIBLE else View.GONE
-        val tilePick = longTilePicker()
-        tilePick.visibility = if (Prefs.longAction(a) == Prefs.LA_TILE) View.VISIBLE else View.GONE
+        hide.visibility = if (cur0 == EdgeActions.HIDE) View.VISIBLE else View.GONE
+        val tilePick = longTilePicker(double)
+        tilePick.visibility = if (cur0 == EdgeActions.TILE) View.VISIBLE else View.GONE
+        val appLabel = a.txt(EdgeActions.appLabel(a, double), 15f, Skin.TEXT)
+        val appPick = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = a.dp(48)
+            setPadding(a.dp(8), 0, a.dp(8), 0)
+            isClickable = true
+            background = a.rippleBg()
+            contentDescription = "Choose app"
+            setOnClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                a.startActivity(AppPickerActivity.prefIntent(a, EdgeActions.appKey(double)))
+            }
+            addView(a.icon(R.drawable.ic_act_app, acc, 20), a.lp(a.dp(24), a.dp(24)))
+            addView(a.txt("App", 13f, Skin.TEXT_2), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
+            addView(View(a), a.lp(0, 1, 1f))
+            addView(appLabel, a.lp(WRAP, WRAP))
+            addView(a.icon(R.drawable.ic_chevron_right, acc, 20), a.lp(a.dp(32), a.dp(24)))
+            visibility = if (cur0 == EdgeActions.OPEN_APP) View.VISIBLE else View.GONE
+        }
         val body = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        val lead0 = LONG_ACTIONS.firstOrNull { it.first == Prefs.longAction(a) } ?: LONG_ACTIONS.last()
+        val lead0 = EdgeActions.ALL.firstOrNull { it.first == cur0 } ?: EdgeActions.ALL.last()
         val headIcon = a.icon(lead0.third, acc, 20).apply { layoutParams = a.lp(a.dp(24), a.dp(24)) }
         val headLabel = a.txt(lead0.second, 15f, Skin.TEXT)
         val chev = a.icon(R.drawable.ic_chevron_down, acc, 20)
-        var open = false
         fun setOpen(o: Boolean) {
-            open = o
+            gestureOpen[gi] = o
             body.visibility = if (o) View.VISIBLE else View.GONE
             chev.animate().rotation(if (o) 180f else 0f).setDuration(150L).start()
         }
+        if (gestureOpen[gi]) { body.visibility = View.VISIBLE; chev.rotation = 180f }
         val head = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -851,29 +880,31 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             setPadding(a.dp(8), 0, a.dp(4), 0)
             isClickable = true
             background = a.rippleBg()
-            contentDescription = "Long press"
+            contentDescription = title
             setOnClickListener {
                 it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                setOpen(!open)
+                setOpen(!gestureOpen[gi])
             }
             addView(a.icon(R.drawable.ic_pointer, acc, 20), a.lp(a.dp(24), a.dp(24)))
-            addView(a.txt("Long press", 13f, Skin.TEXT_2), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
+            addView(a.txt(title, 13f, Skin.TEXT_2), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
             addView(View(a), a.lp(0, 1, 1f))
             addView(headIcon)
             addView(headLabel, a.lp(WRAP, WRAP).apply { leftMargin = a.dp(8) })
             addView(chev, a.lp(a.dp(40), a.dp(24)))
         }
         box.addView(head)
-        body.addView(longPressGrid(hide) { id ->
-            val it = LONG_ACTIONS.first { x -> x.first == id }
+        body.addView(longPressGrid(double, hide) { id ->
+            val it = EdgeActions.ALL.first { x -> x.first == id }
             headIcon.setImageResource(it.third)
             headLabel.text = it.second
-            tilePick.visibility = if (id == Prefs.LA_TILE) View.VISIBLE else View.GONE
-            // choosing Toggle keeps the list open so the tile can be picked right below
-            if (id != Prefs.LA_TILE) setOpen(false)
+            tilePick.visibility = if (id == EdgeActions.TILE) View.VISIBLE else View.GONE
+            appPick.visibility = if (id == EdgeActions.OPEN_APP) View.VISIBLE else View.GONE
+            // Toggle and Open app keep the list open so the tile / app can be picked right below
+            if (id != EdgeActions.TILE && id != EdgeActions.OPEN_APP) setOpen(false)
         })
         body.addView(hide)
         body.addView(tilePick)
+        body.addView(appPick)
         box.addView(body)
     }
 
@@ -1027,32 +1058,16 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         return r
     }
 
-    // a getter, not a stored val: the page is built from init {} before later property initialisers run
-    private val LONG_ACTIONS: List<Triple<String, String, Int>> get() = listOf(
-        Triple(Prefs.LA_HIDE, "Hide", R.drawable.ic_eye),
-        Triple(Prefs.LA_SETTINGS, "Settings", R.drawable.ic_settings),
-        Triple(Prefs.LA_NOTIFICATIONS, "Notifications", R.drawable.ic_bell),
-        Triple(Prefs.LA_QUICK_SETTINGS, "Quick settings", R.drawable.ic_sliders),
-        Triple(Prefs.LA_RECENTS, "Recents", R.drawable.ic_layers),
-        Triple(Prefs.LA_LOCK, "Lock", R.drawable.ic_lock),
-        Triple(Prefs.LA_SCREENSHOT, "Screenshot", R.drawable.ic_screenshot),
-        Triple(Prefs.LA_POWER, "Power menu", R.drawable.ic_power),
-        Triple(Prefs.LA_TORCH, "Torch", R.drawable.ic_flashlight),
-        Triple(Prefs.LA_ASSISTANT, "Assistant", R.drawable.ic_sparkles),
-        Triple(Prefs.LA_TILE, "Toggle", R.drawable.ic_toggle),
-        Triple(Prefs.LA_NONE, "Nothing", R.drawable.ic_x)
-    )
-
     /** The long-press actions as a wrapping grid of icons with short captions; [hide] shows only for Hide. */
     /** Long press = Toggle: one scrolling row of every usable Quick tile (built-in, phone, app tiles, shortcuts). */
-    private fun longTilePicker(): View {
+    private fun longTilePicker(double: Boolean): View {
         val ids = LinkedHashSet<String>()
         Tiles.ALL.filter { it != "clipboard" }.forEach { ids.add(it) }
         try { QsCatalog.systems(a, false).forEach { ids.add(it.id) } } catch (e: Exception) { }
         try { QsCatalog.customs(a, false).forEach { ids.add(it.id) } } catch (e: Exception) { }
         ShortcutStore.all(a).forEach { ids.add(it.id) }
         val list = ids.filter { TileSupport.usable(a, it) }
-        val cur = Prefs.longTile(a)
+        val cur = EdgeActions.tile(a, double)
         val strip = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(a.dp(4), a.dp(4), a.dp(4), a.dp(8))
@@ -1070,7 +1085,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
                 ink = acc
                 filled = id == cur
                 onClick = {
-                    edit().putString(Prefs.KEY_LONG_TILE, id).apply()
+                    edit().putString(EdgeActions.tileKey(double), id).apply()
                     for ((oid, o) in icons) o.filled = oid == id
                 }
             }
@@ -1088,9 +1103,9 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         }
     }
 
-    private fun longPressGrid(hide: View, picked: (String) -> Unit): View {
-        val items = LONG_ACTIONS
-        val cur = Prefs.longAction(a)
+    private fun longPressGrid(double: Boolean, hide: View, picked: (String) -> Unit): View {
+        val items = EdgeActions.ALL
+        val cur = EdgeActions.action(a, double)
         val icons = ArrayList<Pair<String, RoundIcon>>()
         val block = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         val per = 4
@@ -1106,9 +1121,9 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
                 ink = acc
                 filled = id == cur
                 onClick = {
-                    edit().putString(Prefs.KEY_LONG_ACTION, id).apply()
+                    edit().putString(EdgeActions.actionKey(double), id).apply()
                     for ((oid, o) in icons) o.filled = oid == id
-                    hide.visibility = if (id == Prefs.LA_HIDE) View.VISIBLE else View.GONE
+                    hide.visibility = if (id == EdgeActions.HIDE) View.VISIBLE else View.GONE
                     picked(id)
                 }
             }
@@ -1154,7 +1169,6 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         sw(R.drawable.ic_hotspot, "Hotspot", "pill_hotspot", true)
         sw(R.drawable.ic_battery_low, "Low battery", "pill_battery", true)
         sw(R.drawable.ic_clock, "Idle info: time, battery, alarm, speed", "idle_info", false)
-        sw(R.drawable.ic_pointer, "Double-tap for previous app", "double_tap_back", true)
         sw(R.drawable.ic_maximize, "Hide in fullscreen apps", "hide_fullscreen", true)
         sw(R.drawable.ic_eye, "Fade when idle", "fade_idle", false)
         val chev = a.icon(R.drawable.ic_chevron_down, acc, 20).apply { rotation = if (liveOpen) 180f else 0f }
@@ -1784,6 +1798,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         const val T_LOOKS = 8
         const val T_LONG = 9
         const val T_LIVE = 10
+        const val T_DOUBLE = 11
         const val T_EDIT = 7
 
         /** Width of the caption column of slider rows (dp): every track starts at the same x. */

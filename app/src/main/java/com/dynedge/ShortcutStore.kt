@@ -165,7 +165,7 @@ internal object ShortcutStore {
             }
             else -> {
                 val action = s.action ?: return null
-                val i = Intent(action)
+                val i = ShortcutCatalog.build(action, null)
                 val pkg = s.pkg
                 val cls = s.cls
                 if (pkg != null && cls != null) i.component = ComponentName(pkg, cls)
@@ -225,5 +225,17 @@ internal object ShortcutIcons {
         "gamepad" to R.drawable.ic_gamepad
     )
 
-    fun res(name: String?): Int = ALL.firstOrNull { it.first == name }?.second ?: R.drawable.ic_settings
+    /** Extra icons used by catalog entries only (not offered in the picker's icon grid, but stored names resolve). */
+    private val EXTRA: Map<String, Int> = mapOf(
+        "calculator" to R.drawable.ic_sc_calculator, "alarm" to R.drawable.ic_sc_alarm, "timer" to R.drawable.ic_sc_timer,
+        "phone" to R.drawable.ic_sc_phone, "video" to R.drawable.ic_sc_video, "image" to R.drawable.ic_sc_image,
+        "map" to R.drawable.ic_sc_map, "mic" to R.drawable.ic_sc_mic, "volume" to R.drawable.ic_sc_volume,
+        "type" to R.drawable.ic_sc_type, "card" to R.drawable.ic_sc_card, "compass" to R.drawable.ic_sc_compass,
+        "plane" to R.drawable.ic_sc_plane, "access" to R.drawable.ic_sc_access, "grid" to R.drawable.ic_sc_grid,
+        "rotate" to R.drawable.ic_sc_rotate, "keyboard" to R.drawable.ic_sc_keyboard, "eye" to R.drawable.ic_sc_eye,
+        "printer" to R.drawable.ic_sc_printer, "wallet" to R.drawable.ic_sc_wallet, "cast" to R.drawable.ic_sc_cast,
+        "contrast" to R.drawable.ic_sc_contrast
+    )
+
+    fun res(name: String?): Int = ALL.firstOrNull { it.first == name }?.second ?: EXTRA[name] ?: R.drawable.ic_settings
 }

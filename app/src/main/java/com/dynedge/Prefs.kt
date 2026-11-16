@@ -311,7 +311,7 @@ object Prefs {
     const val KEY_LONG_TILE = "long_tile"
     fun longTile(ctx: Context): String = prefs(ctx).getString(KEY_LONG_TILE, "torch") ?: "torch"
     fun longAction(ctx: Context): String =
-        prefs(ctx).getString(KEY_LONG_ACTION, LA_HIDE)?.takeIf { it in LONG_ACTIONS } ?: LA_HIDE
+        prefs(ctx).getString(KEY_LONG_ACTION, LA_HIDE)?.takeIf { it in EdgeActions.IDS } ?: LA_HIDE
 
     const val KEY_HIDE_S = "hide_s"            // Int 1..30 s, long-press on the idle edge hides it this long
     const val HIDE_S_DEF = 5
