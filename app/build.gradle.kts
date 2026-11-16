@@ -20,8 +20,8 @@ android {
     // Deliberately 28: keeps WifiManager.setWifiEnabled, BluetoothAdapter.enable/disable and the
     // hidden insets-listener API usable. See the dynamic-edge skill.
     targetSdk = 28
-    versionCode = 15
-    versionName = "1.9.0"
+    versionCode = 16
+    versionName = "1.9.1"
   }
 
   signingConfigs {

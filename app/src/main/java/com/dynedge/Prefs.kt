@@ -73,7 +73,18 @@ object Prefs {
     fun rows(ctx: Context, key: String, max: Int = 4): Int = prefs(ctx).getInt(key, max).coerceIn(1, max)
     fun timerPreset(ctx: Context, i: Int): Int = prefs(ctx).getInt(KEY_TIMER_P + i, TIMER_DEF[i]).coerceIn(1, 60)
 
-    fun prefs(ctx: Context): SharedPreferences = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+    /**
+     * All settings go through [SafePrefs]: a value stored with another type (an older version, a restore) is
+     * converted or replaced by the default instead of crashing the app and the overlay with it.
+     */
+    fun prefs(ctx: Context): SharedPreferences {
+        val base = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        safe?.let { if (it.base === base) return it }
+        return SafePrefs(base).also { safe = it }
+    }
+
+    @Volatile
+    private var safe: SafePrefs? = null
 
     fun idleDp(ctx: Context): Float =
         prefs(ctx).getFloat(KEY_IDLE_DP, IDLE_DEF).coerceIn(IDLE_MIN, IDLE_MAX)

@@ -86,6 +86,15 @@ page scrolled to that section); category pages are flat; the preview now draws a
 corner; "Themed" is now "Monochrome" and the App icons choice is also on the Apps page.
 Built but not checked on screen: DEVICE badges on one line with the battery badge, AppPickerActivity icons.
 
+## Status 2026-11-16 18:50 (Claude, v1.9.1 installed on vivo, committed, NOT released)
+- Crash fix: the app (and with it the overlay, same process) crashed on open with ClassCastException in
+  Prefs.savedColours: the earlier adb prefs restore had written accent_saved/base_saved as Int. Now every
+  Prefs.prefs() read goes through SafePrefs.kt (converts or falls back to the default on a type mismatch).
+- Banner only for a stopped edge; optional setup steps = gear dot + "Setup checklist" row on the Settings page.
+- Verified on vivo: main page scrolls, Settings opens, 1 overlay, 0 crashes. OTP chip verified earlier.
+- Test gotcha: `adb shell cmd notification post ... "text with spaces"` loses everything after the first word;
+  quote the whole remote command: adb shell "cmd notification post -t Title tag 'text with spaces'".
+
 ## Status 2026-11-16 (Claude, v1.9.0 built + installed on vivo, committed, NOT released)
 Built by 4 Sonnet subagents in parallel (separate files), lead-reviewed. Settings: main page "Live and smart"
 drop-down (Studio.livePanel) with every switch below.

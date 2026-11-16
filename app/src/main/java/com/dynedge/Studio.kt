@@ -363,7 +363,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         val (msg, action, click) = when {
             !Perms.overlayEnabled(a) -> Triple("Dyn Edge is not set up yet", "Set up", { Setup.show(a, acc) })
             !EdgeService.connected -> Triple("Overlay stopped", "Fix", { Perms.open(a) { Perms.appDetails(a) } })
-            missing > 0 -> Triple("Finish setting up", "Open", { Setup.show(a, acc) })
+            // optional steps only light the dot on the gear; the banner is for a stopped edge alone
             else -> Triple("", "", {})
         }
         if (msg.isEmpty()) {
@@ -1617,6 +1617,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     }
 
     private fun morePanel(box: LinearLayout) {
+        // every permission step in one checklist (the gear dot on the main page means one is still open)
+        box.addView(linkRow(R.drawable.ic_check, "Setup checklist") { Setup.show(a, acc) })
         pausePanel(box)
         liveTestPanel(box)
         // credit line at the very bottom of the settings page
