@@ -1644,9 +1644,9 @@ class EdgeView(ctx: Context) : View(ctx) {
             if (infoPrev.isEmpty() && p < 1f) looks.drawIdle(c, idleId, idle, ia * (1f - p), if (beatOn) beat else 0f)
             val cen = 0.4244f * idle
             val base = sp(14f)
-            drawChip(c, chipFitCur, infoCur, -cen, -cen, base, cen * 1.7f, (255f * ia * p + 0.5f).toInt())
+            drawChip(c, chipFitCur, infoCur, -cen, -cen, base, cen * 1.3f, (255f * ia * p + 0.5f).toInt())
             if (infoPrev.isNotEmpty() && p < 1f) {
-                drawChip(c, chipFitPrev, infoPrev, -cen, -cen, base, cen * 1.7f, (255f * ia * (1f - p) + 0.5f).toInt())
+                drawChip(c, chipFitPrev, infoPrev, -cen, -cen, base, cen * 1.3f, (255f * ia * (1f - p) + 0.5f).toInt())
             }
             if (p < 1f) invalidateBean()
         } else {
@@ -1936,7 +1936,7 @@ class EdgeView(ctx: Context) : View(ctx) {
             // chip text where the icon goes, sized to read at idle size once the layout is scaled down
             val cen = 0.4244f * s
             val base = sp(14f) * (if (big) 1f else LIVE_SCALE)
-            drawChip(c, chipFitLive, a.chip, -cen, -cen, base, cen * 1.7f, ai)
+            drawChip(c, chipFitLive, a.chip, -cen, -cen, base, cen * 1.3f, ai)
         } else if (a.iconRes != 0 && !(call && a.decline != null)) {
             val ic = icon(a.iconRes, false)
             ic.bounds = liveIconRect

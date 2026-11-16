@@ -26,6 +26,7 @@ class MainActivity : Activity() {
         if (intent.getBooleanExtra("dump_prefs", false)) {
             // adb test hook: logcat -s DynEdgePrefs prints every pref as key=value (restorable through set_prefs)
             for ((k, v) in Prefs.prefs(this).all) android.util.Log.i("DynEdgePrefs", "$k=$v")
+            for (l in LiveBus.debugLines()) android.util.Log.i("DynEdgeLive", l)
             return true
         }
         // adb test hook: --es live_test <id> toggles one Live test effect (LiveTest ids), "stop" ends them all

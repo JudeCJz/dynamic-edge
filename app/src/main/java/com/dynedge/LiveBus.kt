@@ -61,6 +61,11 @@ object LiveBus {
         if (had) notifyChanged()
     }
 
+    /** adb debugging: one line per entry (key, kind, ongoing, has chip); never the chip text itself. */
+    fun debugLines(): List<String> = synchronized(lock) {
+        map.values.map { e -> "${e.a.key} kind=${e.a.kind} ongoing=${e.a.ongoing} chip=${e.a.chip.isNotEmpty()}" }
+    }
+
     fun top(): LiveActivity? = sorted(0)
 
     fun second(): LiveActivity? = sorted(1)

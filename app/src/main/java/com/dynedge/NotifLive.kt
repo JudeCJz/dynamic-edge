@@ -169,8 +169,9 @@ object NotifLive {
             ctx, key.hashCode(), i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return LiveActivity(
+            // ongoing: the bean's 4 s auto-remove must not cut it short; NotifLive removes it after 60 s
             key, LiveActivity.Kind.PROGRESS, "Code", -1f, 0L, false,
-            R.drawable.ic_key, false, pi, null, null,
+            R.drawable.ic_key, true, pi, null, null,
             chip = code.take(8), tapOpens = true
         )
     }
