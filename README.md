@@ -42,6 +42,22 @@ No AndroidX, no Compose, and no work while idle. Made by Jude CJ.
    - Optional: keep it running (battery), notification access (music and live activities), microphone
      (visualiser only, nothing is recorded), brightness, Do Not Disturb and usage access.
 
+### If Play Protect blocks the install
+
+Some phones (Google's Enhanced Fraud Protection, on in countries such as India) block apps installed from a
+browser, a chat app or a file manager when they ask for accessibility or notification access, with no
+"Install anyway" button. Dyn Edge needs both. Any one of these gets past it:
+
+- **Pause Play Protect for the install:** Play Store > profile picture > Play Protect > gear icon > turn off
+  *Scan apps with Play Protect*, install the APK, then turn it back on.
+- **Install with [Obtainium](https://github.com/ImranR98/Obtainium):** add
+  `https://github.com/JudeCJz/dynamic-edge` once; it installs from the releases here and keeps Dyn Edge updated.
+- **Install from a computer:** `adb install DynEdge-v<version>.apk`.
+
+If the install says the app is *signed with a different key* even after uninstalling, an old copy is still
+on the phone (archived, or in Private Space / dual apps). Remove it fully with `adb uninstall com.dynedge`,
+or uninstall it from every space, then install again.
+
 Updating: install the new APK over the old one, and your settings stay. Versions before 1.8.1 were signed
 differently, so uninstall those once before installing 1.8.1 or later.
 
