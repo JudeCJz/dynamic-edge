@@ -5,7 +5,7 @@ app. Tap or drag it and it springs open into a quarter-circle panel with swipeab
 toggles, media, apps, clipboard, timer, notifications and device stats. While closed it shows what is
 going on: a running timer, a download, charging, a call, or a music visualiser that moves with the beat.
 
-No AndroidX, no Compose, and no work while idle.
+No AndroidX, no Compose, and no work while idle. Made by Jude CJ.
 
 | Idle | Open | Live timer | Settings |
 | --- | --- | --- | --- |

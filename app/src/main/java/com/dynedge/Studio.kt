@@ -1566,6 +1566,11 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     private fun morePanel(box: LinearLayout) {
         pausePanel(box)
         liveTestPanel(box)
+        // credit line at the very bottom of the settings page
+        box.addView(a.txt("Made by Jude CJ  ·  v" + (try { a.packageManager.getPackageInfo(a.packageName, 0).versionName } catch (e: Exception) { "" }), 12f, Skin.TEXT_3).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, a.dp(18), 0, a.dp(10))
+        }, a.lp(MATCH, WRAP))
     }
 
     /** Saved looks: the last section of the main page. */
