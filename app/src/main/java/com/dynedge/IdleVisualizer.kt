@@ -21,7 +21,7 @@ import kotlin.math.sqrt
  *  2. detect the bass onset on the RAW signal, so the kick fires on the real onset frame;
  *  3. push (raw bands, kick) into a short ring and read it back [delayMs] later, which lines the picture up
  *     with what is heard (the Visualizer sees audio before the output path plays it);
- *  4. the one and only smoothing stage: near-instant attack, ~100 ms release.
+ *  4. the one and only smoothing stage: near-instant attack, ~70 ms release.
  */
 class IdleVisualizer(private val ctx: Context) {
 
@@ -98,8 +98,19 @@ class IdleVisualizer(private val ctx: Context) {
         kick = 0f
     }
 
-    /** Fixed output-latency guess: 60 ms normally, 180 ms when a Bluetooth audio output is connected. */
+    /**
+     * How long the Visualizer is ahead of what is heard: the phone's own output latency for the music stream
+     * (hidden AudioManager.getOutputLatency, includes the mixer, HAL and on most phones the Bluetooth link),
+     * plus about one display frame, minus half the FFT window (it is centred on the captured audio).
+     * Falls back to 60 ms / 180 ms (Bluetooth) when the phone does not report it.
+     */
     private fun refreshDelay() {
+        val measured = try {
+            val m = AudioManager::class.java.getMethod("getOutputLatency", Int::class.javaPrimitiveType)
+            (m.invoke(audio, AudioManager.STREAM_MUSIC) as Int).toLong()
+        } catch (e: Throwable) {
+            -1L
+        }
         var bt = false
         try {
             for (d in audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
@@ -109,7 +120,17 @@ class IdleVisualizer(private val ctx: Context) {
             }
         } catch (e: Throwable) {
         }
-        delayMs = if (bt) DELAY_BT else DELAY_WIRED
+        val guess = if (bt) DELAY_BT else DELAY_WIRED
+        delayMs = if (measured in 10L..600L) {
+            val d = measured + FRAME_MS - fftHalfMs()
+            // a Bluetooth link the phone does not count in its latency: never below the plain guess
+            (if (bt) max(d, guess) else d).coerceIn(0L, 600L)
+        } else guess
+    }
+
+    private fun fftHalfMs(): Long {
+        val v = viz ?: return 0L
+        return try { (v.captureSize * 500L) / (v.samplingRate / 1000L).coerceAtLeast(1L) } catch (e: Throwable) { 0L }
     }
 
     /** Bins: [re0 (DC), re(n/2), re1, im1, re2, im2, ...]. Four bands by frequency, low to high. */
@@ -182,7 +203,7 @@ class IdleVisualizer(private val ctx: Context) {
         }
         push(nowMs, k)
         readDelayed(nowMs - (if (real) delayMs else 0L))
-        val rel = 1f - exp(-dt / 0.1f)
+        val rel = 1f - exp(-dt / 0.07f)
         val atk = 1f - exp(-dt / 0.008f)
         for (b in 0 until 4) {
             val t = out[b]
@@ -231,6 +252,7 @@ class IdleVisualizer(private val ctx: Context) {
         const val RING = 64              // ~1 s at 60 Hz, plenty for 180 ms
         const val DELAY_WIRED = 60L
         const val DELAY_BT = 180L
+        const val FRAME_MS = 16L
         val EDGE_HZ = floatArrayOf(250f, 1000f, 4000f, 16000f)
         val WEIGHT = floatArrayOf(0.9f, 1.6f, 2.6f, 4.0f)
         val SPEED = floatArrayOf(6.3f, 8.1f, 5.2f, 9.4f)

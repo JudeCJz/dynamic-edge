@@ -1,11 +1,11 @@
 ---
 name: dynamic-edge
-description: Dynamic Edge - ultra-light Android floating corner widget (black bean-shaped notch in the bottom-right that melts open into quick toggles + media player). Architecture, interface contract, build/install/grant runbook.
+description: Dyn Edge - ultra-light Android floating corner widget (black bean-shaped notch in the bottom-right that melts open into quick toggles + media player). Architecture, interface contract, build/install/grant runbook.
 ---
 
-# Dynamic Edge
+# Dyn Edge
 
-Project root: `D:\VS\PROJECTS\FREE WORK\dynamic-edge`. Package `com.dynedge`, label "Dynamic Edge".
+Project root: `D:\VS\PROJECTS\FREE WORK\dynamic-edge`. Package `com.dynedge`, label "Dyn Edge".
 Design source: `D:\Downloads\index.html` (DYN EDGE radial corner study). Only the idle shape is taken
 from it literally; everything is pure black / white / grey, no accent colour, no theming.
 
@@ -161,7 +161,7 @@ Restart the service after reinstall: toggling the setting off/on, or
 ## Settings screens (2026-11-11) - replaces the v1.5 canvas / tabs studio
 All settings pages are one class, `Studio(activity, mode)` (`Studio.kt`), so every page shares the same flat,
 captioned controls. Background `Skin.BG`, everything interactive is `Skin.accentUi()`.
-- **Main page** (`MainActivity`, mode `Studio.MODE_MAIN`): top bar "Dynamic Edge" + gear (`ic_settings`,
+- **Main page** (`MainActivity`, mode `Studio.MODE_MAIN`): top bar "Dyn Edge" + gear (`ic_settings`,
   `DotIcon`: accent dot while `Perms.missing` is non-empty) -> `SettingsActivity`. Accent status banner only when
   the overlay is off / stopped / permissions are missing (its Fix opens SettingsActivity). One scrolling page:
   Colour (edge colour swatches, equal-width cells + hue cell -> ColorPicker), Shape (corner, open, flare, grab area,
@@ -397,7 +397,7 @@ front. Needs WRITE_SECURE_SETTINGS (pm grant) + usage access; without both the f
   `setExact` chain every 2 s to `GateReceiver` (which also gets BOOT_COMPLETED). Screen off: polling stops
   (alarm path: one 30 s non-wakeup alarm keeps a dead process revivable); screen on / user present: check at
   once. MediaListener connect with the flag set: check at once (reboot / process death never leaves the
-  overlay off). Opening Dynamic Edge's settings always re-enables. Idle cost when not paused: zero.
+  overlay off). Opening Dyn Edge's settings always re-enables. Idle cost when not paused: zero.
 - Settings: More tab, section "Pause in apps": shield toggle (master) + "Sensitive apps / N apps" row ->
   `AppPickerActivity.pauseIntent()` (multi-select, search, checked first, saved on every tap).
 - Known limits: an app that checks the accessibility list before its first window appears may still complain

@@ -47,6 +47,16 @@ object LiveBus {
         if (had) notifyChanged()
     }
 
+    /** Removes every entry whose key matches [pred]. */
+    fun removeIf(pred: (String) -> Boolean) {
+        val had = synchronized(lock) {
+            val ks = map.keys.filter(pred)
+            ks.forEach { map.remove(it) }
+            ks.isNotEmpty()
+        }
+        if (had) notifyChanged()
+    }
+
     fun top(): LiveActivity? = sorted(0)
 
     fun second(): LiveActivity? = sorted(1)

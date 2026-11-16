@@ -20,6 +20,7 @@ import android.util.Log
 import android.view.Display
 import android.view.Gravity
 import android.view.RoundedCorner
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
@@ -32,6 +33,11 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         /** True while the accessibility service is bound (the settings screen shows a status row otherwise). */
         @Volatile
         var connected = false
+            private set
+
+        /** The running service (same process), for the settings Restart and on/off controls. */
+        @Volatile
+        var instance: EdgeService? = null
             private set
     }
 
@@ -97,12 +103,15 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             Prefs.KEY_ACCENT, Prefs.KEY_GRADIENT, Prefs.KEY_GLOW,
             Prefs.KEY_SPEED, Prefs.KEY_BOUNCE, Prefs.KEY_HAPTICS, Prefs.KEY_IDLE_STYLE,
             Prefs.KEY_VISUALIZER, Prefs.KEY_LIVE, Prefs.KEY_BEAT, Prefs.KEY_FILL, Prefs.KEY_VIZ_STYLE,
-            Prefs.KEY_BEAT_AMOUNT, Prefs.KEY_OPACITY, Prefs.KEY_BASE, Prefs.KEY_SWIPE_SENS,
+            Prefs.KEY_BEAT_AMOUNT, Prefs.KEY_BASE, Prefs.KEY_SWIPE_SENS,
             Prefs.KEY_GRAD_ON, Prefs.KEY_GRAD1, Prefs.KEY_GRAD2, Prefs.KEY_TOUCH_SHOW,
             // pixel mode changes typefaces and stroke grids baked into the windows: rebuild the overlay window
             Prefs.KEY_PIXEL_MODE -> if (edge != null) { detachWindow(); attach() }
-            Prefs.KEY_PIXEL_SIZE, Prefs.KEY_BLUR -> edge?.applyLooks()
-            Prefs.KEY_FLOAT, Prefs.KEY_FLOAT_GAP, Prefs.KEY_POS, Prefs.KEY_SIDE_LEFT -> applyPlacement()
+            Prefs.KEY_PIXEL_SIZE -> edge?.applyLooks()
+            // opacity slider: only the layer alpha changes, so the edge never flickers while sliding
+            Prefs.KEY_OPACITY -> edge?.setOpacityPct(Prefs.opacityPct(this))
+            Prefs.KEY_EDGE_ON -> applyEdgeOn()
+            Prefs.KEY_FLOAT, Prefs.KEY_FLOAT_GAP, Prefs.KEY_FLOAT_CORNER, Prefs.KEY_POS, Prefs.KEY_SIDE_LEFT -> applyPlacement()
             QuickConfig.KEY, ShortcutStore.KEY -> edge?.reloadQuick()
             WindowsConfig.KEY -> edge?.reloadWindows()
             Prefs.KEY_FLARE -> applyFlare()
@@ -230,6 +239,23 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
     private val density: Float get() = resources.displayMetrics.density
 
     private var attached = false
+    /** Every overlay view handed to addView and not yet removed. Never more than one on screen. */
+    private val added = ArrayList<View>()
+
+    /** Removes every overlay window we ever added (also ones not attached yet), except [keep]. */
+    private fun removeStrays(manager: WindowManager?, keep: View? = null) {
+        val it = added.iterator()
+        while (it.hasNext()) {
+            val v = it.next()
+            if (v === keep) continue
+            try {
+                manager?.removeViewImmediate(v)
+            } catch (e: Exception) {
+                // not attached (yet, or any more): nothing on screen to remove
+            }
+            it.remove()
+        }
+    }
     private var attachTries = 0
     private val retryDelays = longArrayOf(300L, 1000L, 3000L, 5000L)
     private val attachRunnable = Runnable { attach() }
@@ -280,6 +306,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         Prefs.prefs(this).edit().putString(Prefs.KEY_PREVIEW, Prefs.PREVIEW_NONE)
             .putBoolean(Prefs.KEY_TOUCH_SHOW, false).apply()
         connected = true
+        instance = this
         gating = false
         PauseGate.onServiceUp(this)
         pauseSet = PauseGate.watchSet(this)
@@ -294,6 +321,14 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
     /** Idempotent: builds the view once, adds the window, and keeps retrying with backoff while the token is not valid. */
     private fun attach() {
         if (attached || !connected) return
+        if (!Prefs.edgeOn(this)) {
+            // switched off in the app: keep listening for the switch, show nothing
+            if (!prefListenerRegistered) {
+                Prefs.prefs(this).registerOnSharedPreferenceChangeListener(prefListener)
+                prefListenerRegistered = true
+            }
+            return
+        }
         val manager = wm ?: (getSystemService(Context.WINDOW_SERVICE) as WindowManager).also { wm = it }
         var view = edge
         var params = lp
@@ -334,7 +369,12 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             params = p
         }
         try {
-            if (!view.isAttachedToWindow) manager.addView(view, params)
+            // one edge on screen at a time: drop any window left behind by an earlier build first
+            removeStrays(manager, view)
+            if (view !in added) {
+                manager.addView(view, params)
+                added.add(view)
+            }
         } catch (e: WindowManager.BadTokenException) {
             // the accessibility token is not valid yet: temporary
             Log.w(TAG, "addView: bad token, retrying", e)
@@ -379,6 +419,36 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         }
         // a countdown started before a restart keeps showing on the bean
         TimerControl.restore(this)
+    }
+
+    /** The main on/off switch in the app: removes or rebuilds the overlay window. */
+    private fun applyEdgeOn() {
+        if (Prefs.edgeOn(this)) {
+            attachTries = 0
+            attach()
+        } else {
+            LiveTest.stopAll()
+            mainHandler.removeCallbacks(attachRunnable)
+            detachWindow()
+        }
+    }
+
+    /**
+     * Restart from the app: ends live tests, clears leftover previews, drops the overlay window and builds
+     * a fresh one, as after a reboot. Must be called on the main thread.
+     */
+    fun restart() {
+        LiveTest.stopAll()
+        mainHandler.removeCallbacks(attachRunnable)
+        detachWindow()
+        Prefs.prefs(this).edit().putString(Prefs.KEY_PREVIEW, Prefs.PREVIEW_NONE)
+            .putBoolean(Prefs.KEY_TOUCH_SHOW, false).apply()
+        gating = false
+        pauseSet = PauseGate.watchSet(this)
+        attachTries = 0
+        mainHandler.postDelayed({
+            if (connected && !attached) attach()
+        }, 300L)
     }
 
     /** Retries forever while the service stays connected; the delay grows to a steady 5 s (or [fixed]). */
@@ -567,19 +637,23 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
             } catch (e: Exception) {
                 Log.w(TAG, "view release failed", e)
             } finally {
+                // also when not attached yet: addView was called, so the window exists or is about to
                 try {
-                    if (view.isAttachedToWindow) manager?.removeViewImmediate(view)
+                    if (view in added || view.isAttachedToWindow) manager?.removeViewImmediate(view)
                 } catch (e: Exception) {
                     Log.w(TAG, "removeView failed", e)
                 }
+                added.remove(view)
             }
         }
+        removeStrays(manager ?: getSystemService(Context.WINDOW_SERVICE) as? WindowManager)
         sizesPosted = false
     }
 
     /** Idempotent: every step runs even when another one fails, and all attachment state is reset. */
     private fun teardown() {
         connected = false
+        if (instance === this) instance = null
         mainHandler.removeCallbacks(attachRunnable)
         mainHandler.removeCallbacks(windowsRunnable)
         windowsPosted = false

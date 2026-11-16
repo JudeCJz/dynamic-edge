@@ -134,7 +134,7 @@ object Prefs {
     )
     const val FILL_FLAT = "flat"
     const val FILL_DOTS = "dots"
-    val VIZ_STYLES = listOf("bars", "spectrum", "rays", "wave", "dots")
+    val VIZ_STYLES = listOf("bars", "spectrum", "wave", "dots")
     const val PREVIEW_NONE = ""
     const val PREVIEW_IDLE = "idle"
     const val PREVIEW_OPEN = "open"
@@ -272,6 +272,10 @@ object Prefs {
     const val FLOAT_GAP_MAX = 48f
     const val FLOAT_GAP_DEF = 12f
     fun floatGapDp(ctx: Context): Float = prefs(ctx).getFloat(KEY_FLOAT_GAP, FLOAT_GAP_DEF).coerceIn(0f, FLOAT_GAP_MAX)
+    /** Floating mode: roundness of the corner that faces the screen corner (the one between both bezels), 0..100 %.
+     *  -1 (default) = follow the phone's own screen corner radius as before. */
+    const val KEY_FLOAT_CORNER = "float_corner"
+    fun floatCorner(ctx: Context): Int = prefs(ctx).getInt(KEY_FLOAT_CORNER, -1).coerceIn(-1, 100)
     const val KEY_POS = "edge_pos"             // Int 0..100 %, 0 = in the corner, 100 = bottom centre
     fun edgePos(ctx: Context): Int = prefs(ctx).getInt(KEY_POS, 0).coerceIn(0, 100)
     const val KEY_SIDE_LEFT = "side_left"      // Boolean, edge in the bottom-left corner (mirrored)
@@ -279,7 +283,7 @@ object Prefs {
     /** What a long-press on the closed edge does. Default "hide" (for [hideSeconds]). */
     const val KEY_LONG_ACTION = "long_action"
     const val LA_HIDE = "hide"
-    const val LA_SETTINGS = "settings"           // open Dynamic Edge settings
+    const val LA_SETTINGS = "settings"           // open Dyn Edge settings
     const val LA_NOTIFICATIONS = "notifications" // pull down the notification shade
     const val LA_QUICK_SETTINGS = "quick_settings"
     const val LA_RECENTS = "recents"
@@ -289,8 +293,12 @@ object Prefs {
     const val LA_TORCH = "torch"
     const val LA_ASSISTANT = "assistant"
     const val LA_NONE = "none"
+    const val LA_TILE = "tile"                   // run the Quick tile chosen in KEY_LONG_TILE
     val LONG_ACTIONS = arrayOf(LA_HIDE, LA_SETTINGS, LA_NOTIFICATIONS, LA_QUICK_SETTINGS, LA_RECENTS, LA_LOCK,
-        LA_SCREENSHOT, LA_POWER, LA_TORCH, LA_ASSISTANT, LA_NONE)
+        LA_SCREENSHOT, LA_POWER, LA_TORCH, LA_ASSISTANT, LA_TILE, LA_NONE)
+    /** The Quick tile id (Tiles.ALL, sys:/qs: specs, sc: shortcuts) a long press runs when the action is LA_TILE. */
+    const val KEY_LONG_TILE = "long_tile"
+    fun longTile(ctx: Context): String = prefs(ctx).getString(KEY_LONG_TILE, "torch") ?: "torch"
     fun longAction(ctx: Context): String =
         prefs(ctx).getString(KEY_LONG_ACTION, LA_HIDE)?.takeIf { it in LONG_ACTIONS } ?: LA_HIDE
 
@@ -299,8 +307,12 @@ object Prefs {
     fun hideSeconds(ctx: Context): Int = prefs(ctx).getInt(KEY_HIDE_S, HIDE_S_DEF).coerceIn(1, 30)
 
     // ---- blur: real backdrop blur behind the edge (Android 12+, only where the phone allows cross-window blur)
-    const val KEY_BLUR = "blur"                // Int 0..100, 0 = off (default)
-    fun blur(ctx: Context): Int = prefs(ctx).getInt(KEY_BLUR, 0).coerceIn(0, 100)
+    const val KEY_BLUR = "blur"                // removed setting: blur is always off
+    @Suppress("UNUSED_PARAMETER")
+    fun blur(ctx: Context): Int = 0
+
+    const val KEY_EDGE_ON = "edge_on"          // Boolean, default true: the main toggle that shows or hides the overlay
+    fun edgeOn(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_EDGE_ON, true)
     const val KEY_BLUR_OK = "blur_ok"          // written by the overlay: 0 unknown, 1 works, 2 not available here
     fun blurOk(ctx: Context): Int = prefs(ctx).getInt(KEY_BLUR_OK, 0)
 

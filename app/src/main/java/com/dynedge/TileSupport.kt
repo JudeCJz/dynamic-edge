@@ -27,7 +27,7 @@ internal object TileSupport {
         DND("DND access"),
         WRITE_SETTINGS("Modify system settings"),
         SECURE("secure settings (adb grant)"),
-        ACCESSIBILITY("the Dynamic Edge service on"),
+        ACCESSIBILITY("the Dyn Edge service on"),
         USAGE("usage access")
     }
 
@@ -60,7 +60,7 @@ internal object TileSupport {
     /**
      * Can this tile work on this phone at all? False = missing hardware, not in this phone's quick settings, failed in
      * the panel last time, or only adb can grant what it needs. A tile that only lacks a grantable permission
-     * (DND access, write settings, the Dynamic Edge service) is still usable. Unknown ids are usable.
+     * (DND access, write settings, the Dyn Edge service) is still usable. Unknown ids are usable.
      * Used by the Quick editor's tray, and meant for the overlay to skip such tiles. Cheap: no I/O beyond a few
      * Settings reads; hardware lookups are cached.
      */

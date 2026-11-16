@@ -1,6 +1,6 @@
 ---
 name: dyn-edge-canvas
-description: Dyn Edge Canvas - standalone single-file HTML design and review tool for Dynamic Edge (the Android corner widget). Windows home, window designer on rings/angles, themes (fills, animated effects, rims, palettes), per-window idle arts, live events, and an owner review flow (Pending / Approved / Changes / Rejected + notes). Exports a versioned dp/degree JSON (schema v2, reads v1) that maps to Win*.kt, Looks.kt, EdgePaint.kt and EdgeView.drawLive. How to open it, the schema, every element / fill / effect with its Kotlin mapping and cost, and how the lead imports approved designs.
+description: Dyn Edge Canvas - standalone single-file HTML design and review tool for Dyn Edge (the Android corner widget). Windows home, window designer on rings/angles, themes (fills, animated effects, rims, palettes), per-window idle arts, live events, and an owner review flow (Pending / Approved / Changes / Rejected + notes). Exports a versioned dp/degree JSON (schema v2, reads v1) that maps to Win*.kt, Looks.kt, EdgePaint.kt and EdgeView.drawLive. How to open it, the schema, every element / fill / effect with its Kotlin mapping and cost, and how the lead imports approved designs.
 ---
 
 # Dyn Edge Canvas

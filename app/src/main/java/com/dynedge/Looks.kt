@@ -173,7 +173,7 @@ internal class Looks {
     /**
      * One visualizer style. Idle (open = false): [s] is the bean radius and the design scales with it. Open
      * rim (open = true): [s] is the live open radius, [unit] px per dp; styles that are idle-only draw
-     * "spectrum" instead (only "wave" has a rim form; "bars", "rays" and "dots" are idle-only). [lv] = four band
+     * "spectrum" instead (only "wave" has a rim form; "bars" and "dots" are idle-only). [lv] = four band
      * levels 0..1 (at least 4 entries: [band] reads lv[0..3]).
      */
     fun drawViz(c: Canvas, id0: String, s: Float, open: Boolean, lv: FloatArray, ia: Float, unit: Float) {
@@ -183,14 +183,15 @@ internal class Looks {
         when (id) {
             "bars" -> {
                 // four radial bars on one arc around the bean centroid: each follows the circle (tilted, not vertical)
-                val rc = 0.5f * s
-                val minH = 3f * k
-                val maxH = 0.34f * s
+                // anchored away from the corner, growing outward only; long (outer end at most ~0.87 s, inside the bean)
+                val r0 = 0.42f * s
+                val minH = 4f * k
+                val maxH = 0.45f * s
                 stroke(2.5f * k)
                 for (i in 0 until 4) {
                     val h = minH + (maxH - minH) * lv[i]
                     paint(if (i == 2) accent else ink, 0.85f * ia)
-                    radial(c, rc - h / 2f, rc + h / 2f, 29f + i * 10.7f)
+                    radial(c, r0, r0 + h, 29f + i * 10.7f)
                 }
             }
             "spectrum" -> {
@@ -204,15 +205,6 @@ internal class Looks {
                     val half = (1.5f + amp * b) * k / 2f
                     paint(if (b > 0.7f) accent else ink, (if (open) 0.6f else 0.8f) * ia)
                     radial(c, rimR - half, rimR + half, a)
-                }
-            }
-            "rays" -> {
-                stroke(1.4f * k)
-                for (i in 0 until 8) {
-                    val a = 18f + i * 7.7f
-                    val b = lv[i % 4]
-                    paint(if (i % 2 == 0) accent else ink, 0.9f * ia)
-                    radial(c, 0.3f * s, 0.3f * s + (0.08f + 0.3f * b) * s, a)
                 }
             }
             "wave" -> {

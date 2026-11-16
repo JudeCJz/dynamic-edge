@@ -43,7 +43,19 @@ import kotlin.math.roundToInt
  */
 object PixelMode {
 
-    fun on(ctx: Context): Boolean = Prefs.pixelMode(ctx)
+    /** Pixel mode is for the edge overlay only: every screen of the app itself (an Activity) stays smooth. */
+    fun on(ctx: Context): Boolean = Prefs.pixelMode(ctx) && !inActivity(ctx)
+
+    private fun inActivity(ctx: Context): Boolean {
+        var c: Context? = ctx
+        var n = 0
+        while (c != null && n < 8) {
+            if (c is Activity) return true
+            c = (c as? android.content.ContextWrapper)?.baseContext
+            n++
+        }
+        return false
+    }
 
     @Volatile private var font: Typeface? = null
 

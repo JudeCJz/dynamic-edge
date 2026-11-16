@@ -54,12 +54,14 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
     private var gear: DotIcon? = null
 
     private val tabs: IntArray = when (mode) {
-        MODE_MAIN -> intArrayOf(T_COLOUR, T_SHAPE, T_WINDOWS, T_MUSIC, T_MOTION)
+        MODE_MAIN -> intArrayOf(T_COLOUR, T_SHAPE, T_LONG, T_WINDOWS, T_MUSIC, T_LOOKS)
         MODE_SETTINGS -> intArrayOf(T_MORE)
         else -> intArrayOf(T_EDIT)
     }
 
     private var acc = a.accentUi()
+    /** Windows section drop-down state; kept across panel rebuilds (declared above init on purpose). */
+    private var windowsOpen = false
     private var bottomInset = 0
     private var undoView: View? = null
     private var picking = false
@@ -108,6 +110,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         }
         val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         col.addView(buildTopBar(), a.lp(MATCH, WRAP))
+        if (mode == MODE_MAIN) buildPowerRows(col)
 
         // ---- status banner (main page only, only when the overlay needs attention)
         buildBanner()
@@ -116,6 +119,15 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         })
 
         page.orientation = LinearLayout.VERTICAL
+        page.layoutTransition = android.animation.LayoutTransition().apply {
+            // only glide sections to their new place; whole sections rebuilt in place must not fade
+            disableTransitionType(android.animation.LayoutTransition.APPEARING)
+            disableTransitionType(android.animation.LayoutTransition.DISAPPEARING)
+            disableTransitionType(android.animation.LayoutTransition.CHANGE_APPEARING)
+            disableTransitionType(android.animation.LayoutTransition.CHANGE_DISAPPEARING)
+            enableTransitionType(android.animation.LayoutTransition.CHANGING)
+            setDuration(220L)
+        }
         pageScroll.addView(page, MATCH, WRAP)
         col.addView(pageScroll, a.lp(MATCH, 0, 1f))
         root.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -124,9 +136,43 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         Prefs.prefs(a).registerOnSharedPreferenceChangeListener(prefListener)
     }
 
+    /** Top of the main page: the on/off switch for the whole edge and a Restart that rebuilds it fresh. */
+    private fun buildPowerRows(col: LinearLayout) {
+        val pad = a.dp(Skin.PAD) - a.dp(8)
+        col.addView(toggleRow(R.drawable.ic_power, "Dyn Edge", Prefs.edgeOn(a)) { on ->
+            edit().putBoolean(Prefs.KEY_EDGE_ON, on).apply()
+            if (!on) LiveTest.stopAll()
+            root.postDelayed({ if (!a.isDestroyed) refreshStatus() }, 600L)
+        }.apply { setPadding(pad, 0, pad, 0) }, a.lp(MATCH, WRAP))
+        col.addView(linkRow(R.drawable.ic_rotate, "Restart Dyn Edge") { restartEdge() }
+            .apply { setPadding(pad, 0, pad, 0) }, a.lp(MATCH, WRAP))
+    }
+
+    private fun restartEdge() {
+        LiveTest.stopAll()
+        if (!Prefs.edgeOn(a)) edit().putBoolean(Prefs.KEY_EDGE_ON, true).apply()
+        val svc = EdgeService.instance
+        when {
+            svc != null && EdgeService.connected -> {
+                svc.restart()
+                Toast.makeText(a, "Dyn Edge restarted", Toast.LENGTH_SHORT).show()
+            }
+            A11yGate.canWrite(a) -> {
+                // service is not running: bounce it in the accessibility list so Android binds it again
+                A11yGate.set(a, false)
+                root.postDelayed({
+                    A11yGate.set(a, true)
+                    root.postDelayed({ if (!a.isDestroyed) refreshStatus() }, 1200L)
+                }, 500L)
+                Toast.makeText(a, "Dyn Edge restarted", Toast.LENGTH_SHORT).show()
+            }
+            else -> Perms.open(a) { Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS) }
+        }
+    }
+
     private fun buildTopBar(): View = when (mode) {
         MODE_MAIN -> {
-            val bar = a.topBar("Dynamic Edge", null) as LinearLayout
+            val bar = a.topBar("Dyn Edge", null) as LinearLayout
             bar.setPadding(a.dp(Skin.PAD), 0, a.dp(4), 0)
             val g = DotIcon(a, R.drawable.ic_settings, "Settings").apply {
                 tint = acc
@@ -237,6 +283,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         if (needMore) {
             needMore = false
             rebuildPanel(T_MORE)
+            rebuildPanel(T_LOOKS)
         }
     }
 
@@ -351,6 +398,35 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         }
     }
 
+    /**
+     * Rows that show or hide (Floating's Gap / Corner, Flare, Pixel size, drop-downs) slide and fade instead of
+     * popping: a new row fades in while sliding down a little, a leaving row fades out, and the rows below glide
+     * to their new place.
+     */
+    private fun smoothRows(): android.animation.LayoutTransition = android.animation.LayoutTransition().apply {
+        val d = a.dpf(14f)
+        setAnimator(android.animation.LayoutTransition.APPEARING, android.animation.ObjectAnimator.ofPropertyValuesHolder(
+            null as Any?,
+            android.animation.PropertyValuesHolder.ofFloat(View.ALPHA, 0f, 1f),
+            android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, -d, 0f)
+        ))
+        setAnimator(android.animation.LayoutTransition.DISAPPEARING, android.animation.ObjectAnimator.ofPropertyValuesHolder(
+            null as Any?,
+            android.animation.PropertyValuesHolder.ofFloat(View.ALPHA, 1f, 0f),
+            android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -d)
+        ))
+        enableTransitionType(android.animation.LayoutTransition.CHANGING)
+        setDuration(220L)
+        setStagger(android.animation.LayoutTransition.CHANGE_APPEARING, 0L)
+        setStagger(android.animation.LayoutTransition.CHANGE_DISAPPEARING, 0L)
+        setStagger(android.animation.LayoutTransition.CHANGING, 0L)
+        setInterpolator(android.animation.LayoutTransition.APPEARING, android.view.animation.DecelerateInterpolator())
+        setInterpolator(android.animation.LayoutTransition.DISAPPEARING, android.view.animation.AccelerateInterpolator())
+        // the appearing row starts its fade only after the rows below have begun to make room
+        setStartDelay(android.animation.LayoutTransition.APPEARING, 60L)
+        setStartDelay(android.animation.LayoutTransition.CHANGE_DISAPPEARING, 60L)
+    }
+
     private fun buildPanels() {
         vizThumbs.clear()
         choices.clear()
@@ -372,9 +448,19 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     /** One group of the page: its settings, separated by space (no heading: every row is captioned). */
     private fun section(t: Int, first: Boolean): View {
+        // each category in its own rounded box (one level only: nothing inside it is boxed again)
         val box = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(a.dp(8), a.dp(if (first) 6 else 22), a.dp(8), a.dp(4))
+            setPadding(a.dp(6), a.dp(8), a.dp(6), a.dp(8))
+            background = GradientDrawable().apply {
+                setColor(Skin.BOX)
+                cornerRadius = a.dpf(Skin.RADIUS.toFloat() + 4f)
+            }
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                leftMargin = a.dp(10); rightMargin = a.dp(10)
+                topMargin = a.dp(if (first) 6 else 12); bottomMargin = a.dp(2)
+            }
+            layoutTransition = smoothRows()
         }
         when (t) {
             T_COLOUR -> colourPanel(box)
@@ -383,6 +469,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             T_MUSIC -> musicPanel(box)
             T_MOTION -> motionPanel(box)
             T_MORE -> morePanel(box)
+            T_LOOKS -> savedLooksPanel(box)
+            T_LONG -> longPressPanel(box)
             T_EDIT -> editorPanel(box)
         }
         return box
@@ -449,6 +537,28 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         r.addView(lead(res))
         r.addView(label ?: captionText(caption), a.lp(a.dp(CAPTION_W), WRAP).apply { leftMargin = a.dp(14) })
         r.addView(s, a.lp(0, WRAP, 1f))
+        // reset to the default value (the slider's tick); faint while the slider already sits on it
+        val def = tick
+        if (def != null) {
+            val reset = a.icon(R.drawable.ic_undo, acc, 18).apply {
+                contentDescription = "Reset $caption"
+                isClickable = true
+                background = a.rippleBg()
+                scaleType = ImageView.ScaleType.CENTER
+            }
+            fun dim() { reset.alpha = if (Math.abs(s.value - def) < 0.01f) 0.3f else 1f }
+            dim()
+            s.onChange = { v -> keepPreview(); save(v); dim() }
+            reset.setOnClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                s.value = def
+                start()
+                save(s.value)
+                dim()
+                root.postDelayed({ stop() }, 700L)
+            }
+            r.addView(reset, a.lp(a.dp(36), a.dp(40)))
+        }
         return r
     }
 
@@ -553,20 +663,22 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     /** Edge and body colour: four presets, the user's saved colours, then "+" for the picker. */
     private fun colourPanel(box: LinearLayout) {
-        box.addView(swatchStrip(R.drawable.ic_palette, "Edge colour", Prefs.ACCENT_PRESETS, Prefs.KEY_ACCENT,
-            Prefs.KEY_ACCENT_SAVED, Prefs.accent(a)))
         box.addView(swatchStrip(R.drawable.ic_droplet, "Body colour", Prefs.BASE_PRESETS, Prefs.KEY_BASE,
             Prefs.KEY_BASE_SAVED, Prefs.base(a)))
-        // real backdrop blur where the phone allows it; Opacity sets how much of it shows through the body
-        box.addView(slider(R.drawable.ic_droplet, "Blur", 0f, 100f, Prefs.blur(a).toFloat(), 0f,
-            start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
-            edit().putInt(Prefs.KEY_BLUR, it.toInt()).apply()
-        })
-        if (Prefs.blurOk(a) == 2) {
-            box.addView(a.txt("Blur not available on this phone", 12f, Skin.TEXT_2).apply {
-                setPadding(a.dp(8), 0, a.dp(8), a.dp(6))
-            })
+        box.addView(swatchStrip(R.drawable.ic_palette, "Edge colour", Prefs.ACCENT_PRESETS, Prefs.KEY_ACCENT,
+            Prefs.KEY_ACCENT_SAVED, Prefs.accent(a)))
+        // pixel art look for the edge only (the app screens stay smooth)
+        val size = slider(R.drawable.ic_maximize, "Pixel size", Prefs.PIXEL_SIZE_MIN, Prefs.PIXEL_SIZE_MAX,
+            Prefs.pixelSizeDp(a), Prefs.PIXEL_SIZE_DEF,
+            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putFloat(Prefs.KEY_PIXEL_SIZE, it).apply()
         }
+        size.visibility = if (Prefs.pixelMode(a)) View.VISIBLE else View.GONE
+        box.addView(toggleRow(R.drawable.ic_grid, "Pixel mode", Prefs.pixelMode(a)) { v ->
+            edit().putBoolean(Prefs.KEY_PIXEL_MODE, v).apply()
+            size.visibility = if (v) View.VISIBLE else View.GONE
+        })
+        box.addView(size)
     }
 
     /** Opens the picker; the colour applies live and is saved to the strip when the picker closes. */
@@ -666,6 +778,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             Prefs.setOpenDp(a, it)
         })
+        // animation speed sits with the sizes (it used to be a section of its own)
+        motionPanel(box)
         val flare = slider(R.drawable.ic_flare, "Flare", 0f, Prefs.FLARE_MAX, Prefs.flareDp(a), Prefs.FLARE_DEF,
             start = { preview(if (previewOpen) Prefs.PREVIEW_OPEN else Prefs.PREVIEW_IDLE) },
             stop = { preview(Prefs.PREVIEW_NONE) }) {
@@ -675,9 +789,16 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
             edit().putFloat(Prefs.KEY_FLOAT_GAP, it).apply()
         }
+        // floating only: how round the corner between both bezels is (starts at the phone-like default 40)
+        val corner = slider(R.drawable.ic_quarter, "Corner", 0f, 100f,
+            Prefs.floatCorner(a).let { if (it < 0) 40f else it.toFloat() }, 40f,
+            start = { preview(Prefs.PREVIEW_IDLE) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
+            edit().putInt(Prefs.KEY_FLOAT_CORNER, Math.round(it)).apply()
+        }
         val floating = Prefs.floatOn(a)
         flare.visibility = if (floating) View.GONE else View.VISIBLE
         dist.visibility = if (floating) View.VISIBLE else View.GONE
+        corner.visibility = dist.visibility
         box.addView(flare)
         // invisible on the phone, so it only changes the touch area; the dashed square is only shown while dragging
         box.addView(slider(R.drawable.ic_pointer, "Touch area", Prefs.GRAB_MIN, Prefs.GRAB_MAX, Prefs.grabDp(a), Prefs.GRAB_DEF,
@@ -697,14 +818,20 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             edit().putBoolean(Prefs.KEY_FLOAT, v).apply()
             flare.visibility = if (v) View.GONE else View.VISIBLE
             dist.visibility = if (v) View.VISIBLE else View.GONE
+            corner.visibility = dist.visibility
         })
         box.addView(dist)
+        box.addView(corner)
+    }
 
-        // long press on the closed edge
+    /** Long press on the closed edge: its own box on the main page. */
+    private fun longPressPanel(box: LinearLayout) {
         val hide = slider(R.drawable.ic_clock, "Hide time", 1f, 30f, Prefs.hideSeconds(a).toFloat(), Prefs.HIDE_S_DEF.toFloat()) {
             edit().putInt(Prefs.KEY_HIDE_S, Math.round(it)).apply()
         }
         hide.visibility = if (Prefs.longAction(a) == Prefs.LA_HIDE) View.VISIBLE else View.GONE
+        val tilePick = longTilePicker()
+        tilePick.visibility = if (Prefs.longAction(a) == Prefs.LA_TILE) View.VISIBLE else View.GONE
         val body = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         val lead0 = LONG_ACTIONS.firstOrNull { it.first == Prefs.longAction(a) } ?: LONG_ACTIONS.last()
         val headIcon = a.icon(lead0.third, acc, 20).apply { layoutParams = a.lp(a.dp(24), a.dp(24)) }
@@ -740,15 +867,19 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             val it = LONG_ACTIONS.first { x -> x.first == id }
             headIcon.setImageResource(it.third)
             headLabel.text = it.second
-            setOpen(false)
+            tilePick.visibility = if (id == Prefs.LA_TILE) View.VISIBLE else View.GONE
+            // choosing Toggle keeps the list open so the tile can be picked right below
+            if (id != Prefs.LA_TILE) setOpen(false)
         })
         body.addView(hide)
+        body.addView(tilePick)
         box.addView(body)
     }
 
     /** "Live test": one row per dynamic effect; tap to play it on the real edge, tap again to stop. */
     private fun liveTestPanel(box: LinearLayout) {
         val marks = HashMap<String, ImageView>()
+        val stops = HashMap<String, View>()
         val names = HashMap<String, String>()
         val body = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         val status = a.txt("Off", 15f, Skin.TEXT)
@@ -780,7 +911,9 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             var running: String? = null
             for ((id, m) in marks) {
                 val on = LiveTest.isRunning(id)
-                m.setImageResource(if (on) R.drawable.ic_square else R.drawable.ic_play)
+                // running: the play icon turns into a filled Stop button in the same place
+                m.visibility = if (on) View.GONE else View.VISIBLE
+                stops[id]?.visibility = if (on) View.VISIBLE else View.GONE
                 if (on && running == null) running = names[id]
             }
             status.text = running ?: "Off"
@@ -825,10 +958,30 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             val m = a.icon(R.drawable.ic_play, acc, 20)
             marks[id] = m
             names[id] = name
-            r.addView(m, a.lp(a.dp(52), a.dp(24)))
+            val ink = Skin.onColor(acc)
+            val stop = LinearLayout(a).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(a.dp(10), a.dp(6), a.dp(12), a.dp(6))
+                background = GradientDrawable().apply { setColor(acc); cornerRadius = a.dpf(16f) }
+                isClickable = true
+                contentDescription = "Stop $name"
+                visibility = View.GONE
+                addView(a.icon(R.drawable.ic_square, ink, 14), a.lp(a.dp(14), a.dp(14)))
+                addView(a.txt("Stop", 13f, ink), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(6) })
+                setOnClickListener {
+                    it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    if (LiveTest.isRunning(id)) LiveTest.toggle(a, id)
+                }
+            }
+            stops[id] = stop
+            val slot = FrameLayout(a).apply {
+                addView(m, FrameLayout.LayoutParams(a.dp(52), a.dp(24), Gravity.CENTER))
+                addView(stop, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
+            }
+            r.addView(slot, a.lp(WRAP, WRAP).apply { rightMargin = a.dp(4) })
             body.addView(r)
         }
-        body.addView(linkRow(R.drawable.ic_x, "Stop all") { LiveTest.stopAll() })
         LiveTest.listener = { refresh() }
         refresh()
     }
@@ -885,10 +1038,55 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         Triple(Prefs.LA_POWER, "Power menu", R.drawable.ic_power),
         Triple(Prefs.LA_TORCH, "Torch", R.drawable.ic_flashlight),
         Triple(Prefs.LA_ASSISTANT, "Assistant", R.drawable.ic_sparkles),
+        Triple(Prefs.LA_TILE, "Toggle", R.drawable.ic_toggle),
         Triple(Prefs.LA_NONE, "Nothing", R.drawable.ic_x)
     )
 
     /** The long-press actions as a wrapping grid of icons with short captions; [hide] shows only for Hide. */
+    /** Long press = Toggle: one scrolling row of every usable Quick tile (built-in, phone, app tiles, shortcuts). */
+    private fun longTilePicker(): View {
+        val ids = LinkedHashSet<String>()
+        Tiles.ALL.filter { it != "clipboard" }.forEach { ids.add(it) }
+        try { QsCatalog.systems(a, false).forEach { ids.add(it.id) } } catch (e: Exception) { }
+        try { QsCatalog.customs(a, false).forEach { ids.add(it.id) } } catch (e: Exception) { }
+        ShortcutStore.all(a).forEach { ids.add(it.id) }
+        val list = ids.filter { TileSupport.usable(a, it) }
+        val cur = Prefs.longTile(a)
+        val strip = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(a.dp(4), a.dp(4), a.dp(4), a.dp(8))
+        }
+        val icons = ArrayList<Pair<String, RoundIcon>>()
+        for (id in list) {
+            val name = when {
+                ShortcutStore.isId(id) -> ShortcutStore.all(a).firstOrNull { it.id == id }?.label ?: "Shortcut"
+                QsCatalog.isCustom(id) -> QsCatalog.entry(a, id)?.label ?: Tiles.label(id)
+                else -> Tiles.label(id)
+            }
+            val res = if (ShortcutStore.isId(id)) ShortcutStore.iconRes(a, id) else Tiles.staticIcon(id)
+            val ic = RoundIcon(a, res, name, false).apply {
+                accent = acc
+                ink = acc
+                filled = id == cur
+                onClick = {
+                    edit().putString(Prefs.KEY_LONG_TILE, id).apply()
+                    for ((oid, o) in icons) o.filled = oid == id
+                }
+            }
+            icons.add(Pair(id, ic))
+            strip.addView(LinearLayout(a).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                addView(ic, a.lp(a.dp(48), a.dp(48)))
+                addView(smallCaption(name), a.lp(a.dp(64), WRAP))
+            }, a.lp(a.dp(68), WRAP))
+        }
+        return android.widget.HorizontalScrollView(a).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(strip)
+        }
+    }
+
     private fun longPressGrid(hide: View, picked: (String) -> Unit): View {
         val items = LONG_ACTIONS
         val cur = Prefs.longAction(a)
@@ -931,9 +1129,35 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     /** The windows: switch = on / off, row = that window's editor, grip = drag to reorder. */
     private fun windowsPanel(box: LinearLayout) {
-        box.addView(captionLine(R.drawable.ic_panel_top, "Windows"))
-        val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        val list = LinearLayout(a).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (windowsOpen) View.VISIBLE else View.GONE
+        }
         for (e in WindowsConfig.load(a)) list.addView(windowRow(e, list), a.lp(MATCH, WRAP))
+        // drop-down header: tap to show the normal window list (slides in through the box's layout transition)
+        val on = WindowsConfig.load(a).count { it.on }
+        val chev = a.icon(R.drawable.ic_chevron_down, acc, 20).apply { rotation = if (windowsOpen) 180f else 0f }
+        val head = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = a.dp(56)
+            setPadding(a.dp(8), 0, a.dp(4), 0)
+            isClickable = true
+            background = a.rippleBg()
+            contentDescription = "Windows"
+            setOnClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                windowsOpen = !windowsOpen
+                list.visibility = if (windowsOpen) View.VISIBLE else View.GONE
+                chev.animate().rotation(if (windowsOpen) 180f else 0f).setDuration(180L).start()
+            }
+            addView(a.icon(R.drawable.ic_panel_top, acc, 20), a.lp(a.dp(24), a.dp(24)))
+            addView(a.txt("Windows", 15f, Skin.TEXT), a.lp(WRAP, WRAP).apply { leftMargin = a.dp(14) })
+            addView(View(a), a.lp(0, 1, 1f))
+            addView(a.txt("$on on", 13f, Skin.TEXT_2), a.lp(WRAP, WRAP))
+            addView(chev, a.lp(a.dp(40), a.dp(24)))
+        }
+        box.addView(head)
         box.addView(list, a.lp(MATCH, WRAP))
     }
 
@@ -1095,7 +1319,7 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         box.addView(captionLine(R.drawable.ic_music, "Visualizer style"))
         val r = row()
         val viz = ArrayList<EdgeThumb>()
-        val names = listOf("Bars", "Spectrum", "Rays", "Wave", "Dots")
+        val names = listOf("Bars", "Spectrum", "Wave", "Dots")
         for ((k, id) in Prefs.VIZ_STYLES.withIndex()) {
             val name = names.getOrElse(k) { id }
             val t = thumb(EdgeThumb.VIZ, id, "$name visualizer", Prefs.vizStyle(a) == id) {
@@ -1341,8 +1565,11 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
 
     private fun morePanel(box: LinearLayout) {
         pausePanel(box)
+        liveTestPanel(box)
+    }
 
-        // saved looks
+    /** Saved looks: the last section of the main page. */
+    private fun savedLooksPanel(box: LinearLayout) {
         box.addView(captionLine(R.drawable.ic_save, "Saved looks"))
         val strip = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1395,26 +1622,10 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
             strip.addView(cell, a.lp(a.dp(68), WRAP))
         }
         box.addView(hscroll(strip), a.lp(MATCH, WRAP).apply { topMargin = a.dp(4) })
-
-        liveTestPanel(box)
-
-        // the very bottom: the whole app as pixel art
-        box.addView(toggleRow(R.drawable.ic_grid, "Pixel mode", Prefs.pixelMode(a)) { v ->
-            edit().putBoolean(Prefs.KEY_PIXEL_MODE, v).apply()
-            a.recreate()
-        })
-        if (Prefs.pixelMode(a)) {
-            box.addView(slider(R.drawable.ic_maximize, "Pixel size", Prefs.PIXEL_SIZE_MIN, Prefs.PIXEL_SIZE_MAX,
-                Prefs.pixelSizeDp(a), Prefs.PIXEL_SIZE_DEF,
-            start = { preview(Prefs.PREVIEW_OPEN) }, stop = { preview(Prefs.PREVIEW_NONE) }) {
-                edit().putFloat(Prefs.KEY_PIXEL_SIZE, it).apply()
-            })
-        }
     }
 
     /** "Pause in apps": master switch + the row that opens the multi-select app picker. Flat, no boxes. */
     private fun pausePanel(box: LinearLayout) {
-        box.addView(captionLine(R.drawable.ic_pause, "Pause in apps"))
         val on = Prefs.pauseOn(a)
         val n = Prefs.pauseApps(a).size
         val summary = when {
@@ -1510,6 +1721,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         const val T_MUSIC = 3
         const val T_MOTION = 4
         const val T_MORE = 6
+        const val T_LOOKS = 8
+        const val T_LONG = 9
         const val T_EDIT = 7
 
         /** Width of the caption column of slider rows (dp): every track starts at the same x. */

@@ -20,6 +20,8 @@ object Skin {
     const val BG = 0xFF232427.toInt()
     /** Row / panel background. */
     const val SURFACE = 0xFF2C2D31.toInt()
+    /** Background of a settings category box (between BG and SURFACE so surfaces inside still read). */
+    const val BOX = 0xFF28292D.toInt()
     /** Pressed or selected row. */
     const val SURFACE_HI = 0xFF3A3B40.toInt()
     /** Hairline between rows. */

@@ -13,7 +13,7 @@ import android.provider.Settings
 import android.service.quicksettings.TileService
 
 /**
- * Catalog of the phone's own quick settings tiles that Dynamic Edge does not implement natively.
+ * Catalog of the phone's own quick settings tiles that Dyn Edge does not implement natively.
  *
  * Ids: "sys:<spec>" for SystemUI tile specs (Settings.Secure "sysui_qs_tiles", the SystemUI stock list and specs
  * the QS driver has seen in the live panel), and "cus:<pkg>/<TileService class>" for third-party TileServices.

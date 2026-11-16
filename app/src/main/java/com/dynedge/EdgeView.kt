@@ -47,7 +47,7 @@ import kotlin.math.sqrt
 
 
 /**
- * The Dynamic Edge host view: shape, springs, paging, section layers and touch dispatch.
+ * The Dyn Edge host view: shape, springs, paging, section layers and touch dispatch.
  * The view fills its window and everything is anchored to the bottom-right corner.
  *
  * The open state is a true quarter circle of radius R centred on the corner. Each window (WinQuick, WinMedia,
@@ -282,6 +282,8 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
     private val path = Path()
     private val regionPath = Path()
+    /** The idle touch area in the bean's own shape, unmirrored (drawn dashed while the Touch area slider moves). */
+    private val touchPath = Path()
     private val arcRect = RectF()
     private val earRect = RectF()
     private val region = Region()
@@ -335,6 +337,8 @@ class EdgeView(ctx: Context) : View(ctx) {
     private var gRhoB = 0f
     private var gRhoS = 0f
     private var gTip = 0f
+    /** Floating corner roundness 0..1 of the largest tip (0.4 r), or -1 = the fixed FLOAT_TIP_DP. */
+    private var floatCornerFrac = -1f
     private val mirrorMat = Matrix()
     private val pathMeasure = PathMeasure()
 
@@ -377,7 +381,6 @@ class EdgeView(ctx: Context) : View(ctx) {
     /** Shows the invisible idle grab square on the overlay, so the touch area is visible while adjusting it. */
     private var touchShow = false
     private val touchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val touchRect = RectF()
     private var fillId = "flat"
     private var gradOn = true
     private var gradientActive = true
@@ -462,7 +465,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     private fun updateBlur() {
         val dw = drawW; val dh = drawH
         val r = min(dw, dh)
-        val tip = min(gTip, 0.4f * r)
+        val tip = tipFor(r)
         val w = width; val h = height
         val top = (h - dh).toInt()
         if (mirror) backBlur.update(0, top, dw.toInt(), h, 0f, r, 0f, tip, blurPx)
@@ -792,6 +795,7 @@ class EdgeView(ctx: Context) : View(ctx) {
     fun applyPlacement() {
         val c = context
         floatOn = Prefs.floatOn(c)
+        floatCornerFrac = Prefs.floatCorner(c).let { if (it < 0) -1f else it / 100f }
         mirror = Prefs.sideLeft(c)
         Geo.mirror = mirror
         placeX = placeXFor(c)
@@ -875,7 +879,18 @@ class EdgeView(ctx: Context) : View(ctx) {
             Prefs.LA_POWER -> host?.performAction(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
             Prefs.LA_TORCH -> toggleTorchOnce()
             Prefs.LA_ASSISTANT -> AssistControl.launch(c)
+            Prefs.LA_TILE -> runLongTile(Prefs.longTile(c))
         }
+    }
+
+    private var longTiles: Tiles? = null
+
+    /** Runs one Quick tile from the long press (same routing as tapping it in the QUICK window). */
+    private fun runLongTile(id: String) {
+        if (id.isEmpty()) return
+        val t = longTiles ?: Tiles(context) {}.also { longTiles = it }
+        t.service = service
+        if (Tiles.needsCollapseDelay(id)) postDelayed({ t.perform(id) }, 350L) else t.perform(id)
     }
 
     /** Flips the torch the way the QUICK torch tile does (CameraManager.setTorchMode on the flash camera). */
@@ -1303,13 +1318,32 @@ class EdgeView(ctx: Context) : View(ctx) {
             invalidate()
             return
         }
+        // the layer is created once and only its paint alpha changes afterwards (re-creating it per slider step
+        // flashed the edge); it is dropped only when the opacity is full and no slider is moving
         if (pct >= 100) {
-            if (layerType != LAYER_TYPE_NONE) setLayerType(LAYER_TYPE_NONE, null)
+            removeCallbacks(dropLayer)
+            if (layerType != LAYER_TYPE_NONE) {
+                layerPaint.alpha = 255
+                setLayerPaint(layerPaint)
+                postDelayed(dropLayer, 800L)
+            }
         } else {
+            removeCallbacks(dropLayer)
             layerPaint.alpha = (255f * pct / 100f + 0.5f).toInt()
-            setLayerType(LAYER_TYPE_HARDWARE, layerPaint)
+            if (layerType == LAYER_TYPE_HARDWARE) setLayerPaint(layerPaint)
+            else setLayerType(LAYER_TYPE_HARDWARE, layerPaint)
         }
         invalidate()
+    }
+
+    private val dropLayer = Runnable {
+        if (opacityPct >= 100 && layerType != LAYER_TYPE_NONE) setLayerType(LAYER_TYPE_NONE, null)
+    }
+
+    /** Opacity slider fast path: only the layer alpha changes, nothing is rebuilt. */
+    fun setOpacityPct(pct: Int) {
+        if (pct == opacityPct) return
+        applyOpacity(pct)
     }
 
     /**
@@ -1599,7 +1633,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         // pulsing ring along the rim
         val r = sr(s - dp(5f))
         liveOval.set(-r, -r, r, r)
-        arcPaint.strokeWidth = sw(dp(4f))
+        arcPaint.strokeWidth = sw(dp(7f))
         arcPaint.color = C_GREEN
         arcPaint.alpha = (255f * (0.25f + 0.45f * (1f - phase)) * la + 0.5f).toInt()
         c.drawArc(liveOval, 180f + SL_A0, SL_A1 - SL_A0, false, arcPaint)
@@ -1660,20 +1694,26 @@ class EdgeView(ctx: Context) : View(ctx) {
         c.translate(width.toFloat(), height.toFloat())
         val ps = press.value * (w / s).coerceIn(0.5f, 1.15f)
         c.scale(ps, ps)
-        // progress arc along the curved rim
-        val r = sr(s - dp(5f))
+        // progress arc along the curved rim; floating, the rim ends are rounded, so the arc stops short of them
+        // (plus half the stroke and its round cap) instead of running out past the body
+        // one thick track for every live activity (timer, download, charging, call...): 7 dp, inset so it sits
+        // inside the rim
+        val r = sr(s - dp(if (floatOn) 9f else 7f))
+        val trim = if (floatOn) Math.toDegrees(((max(gRhoB, gRhoS) + dp(7f)) / max(r, 1f)).toDouble()).toFloat() else 0f
+        val A0 = SL_A0 + trim
+        val A1 = SL_A1 - trim
         liveOval.set(-r, -r, r, r)
         arcPaint.strokeWidth = sw(dp(4f))
         arcPaint.color = ink
         arcPaint.alpha = (255f * 0.24f * la + 0.5f).toInt()
-        c.drawArc(liveOval, 180f + SL_A0, SL_A1 - SL_A0, false, arcPaint)
+        c.drawArc(liveOval, 180f + A0, A1 - A0, false, arcPaint)
         arcPaint.color = tint
         arcPaint.alpha = ai
         if (a.progress == -2f) {
-            val head = ((SystemClock.uptimeMillis() % 1400L) / 1400f) * (SL_A1 - SL_A0 + 24f)
+            val head = ((SystemClock.uptimeMillis() % 1400L) / 1400f) * (A1 - A0 + 24f)
             val st = max(0f, head - 24f)
-            val en = min(SL_A1 - SL_A0, head)
-            if (en > st) c.drawArc(liveOval, 180f + SL_A0 + st, en - st, false, arcPaint)
+            val en = min(A1 - A0, head)
+            if (en > st) c.drawArc(liveOval, 180f + A0 + st, en - st, false, arcPaint)
         } else {
             val fr = when {
                 a.progress >= 0f -> a.progress
@@ -1681,7 +1721,7 @@ class EdgeView(ctx: Context) : View(ctx) {
                     (a.chronoBase - System.currentTimeMillis()).toFloat() / liveTotalMs
                 else -> -1f
             }
-            if (fr > 0.002f) c.drawArc(liveOval, 180f + SL_A0, (SL_A1 - SL_A0) * fr.coerceAtMost(1f), false, arcPaint)
+            if (fr > 0.002f) c.drawArc(liveOval, 180f + A0, (A1 - A0) * fr.coerceAtMost(1f), false, arcPaint)
         }
         // icon at the centroid
         if (a.iconRes != 0) {
@@ -1717,7 +1757,7 @@ class EdgeView(ctx: Context) : View(ctx) {
             }
         }
         if (liveSec != null) {
-            val ang = Math.toRadians(88.0)
+            val ang = Math.toRadians(if (floatOn) (A1 + 3f).toDouble() else 88.0)
             fill.color = ink
             fill.alpha = (255f * 0.7f * la + 0.5f).toInt()
             c.drawCircle(-r * cos(ang).toFloat(), -r * sin(ang).toFloat(), dp(2.2f), fill)
@@ -1799,6 +1839,10 @@ class EdgeView(ctx: Context) : View(ctx) {
     }
 
     // ================================================================ geometry
+
+    /** The rounding of the corner between both bezels for a shape of radius [r]. */
+    private fun tipFor(r: Float): Float =
+        if (floatOn && floatCornerFrac >= 0f) floatCornerFrac * 0.4f * r else min(gTip, 0.4f * r)
 
     /** Edge fillet radius for a shape of the given size: scaled with the idle size, at most 40% of it. */
     private fun flareFor(size: Float, p: Float): Float {
@@ -1898,7 +1942,7 @@ class EdgeView(ctx: Context) : View(ctx) {
         } else {
             p.arcTo(arcRect, aB, 270f - aB, false)
         }
-        val t = min(gTip, 0.4f * r0)
+        val t = tipFor(r0)
         if (t > 0.5f) {
             p.lineTo(right, bottom - t)
             arcRect.set(right - 2f * t, bottom - 2f * t, right, bottom)
@@ -1942,6 +1986,19 @@ class EdgeView(ctx: Context) : View(ctx) {
         xCx = -xc
         xCy = -xc
         xRad = (xc - dp(3.5f)).coerceIn(dp(10f), dp(18f))
+        // the X follows the rounded corner (Corner slider, display corner): pushed out along the diagonal until the
+        // whole button sits inside the corner fillet with a small margin
+        val tip = when {
+            floatOn -> if (floatCornerFrac >= 0f) floatCornerFrac * 0.4f * rad else min(dp(FLOAT_TIP_DP), 0.4f * rad)
+            placeX > 0 -> 0f
+            else -> min(tipPx, 0.4f * rad)
+        }
+        val need = xRad + dp(4f)
+        val fit = if (tip > need) tip - (tip - need) / 1.4142f else tip
+        if (fit > xc) {
+            xCx = -fit
+            xCy = -fit
+        }
         xHit = dp(24f) // 48 dp hit area
         patExtent = rad * 1.2f + flarePx + dp(30f)
 
@@ -2210,9 +2267,13 @@ class EdgeView(ctx: Context) : View(ctx) {
                 // starting just above / left of the bean comes here, not to the launcher underneath
                 // shaped like the bean (a quarter circle around the corner), never a square: the square's far
                 // corner blocked taps on things next to the edge
+                // the bean's own outline grown to the grab size (same corner, same rounding), so the touch area
+                // has the edge's real shape
                 ex = max(w, grabPx.toFloat())
                 grabPath.rewind()
-                grabPath.addCircle(if (mirror) 0f else ww.toFloat(), hh.toFloat(), ex, Path.Direction.CW)
+                buildShape(grabPath, ww - ex, hh - ex, ex, ex)
+                touchPath.set(grabPath)
+                if (mirror) grabPath.transform(mirrorMat)
                 grabRegion.setPath(grabPath, clipRegion)
                 region.op(grabRegion, Region.Op.UNION)
             }
@@ -2474,11 +2535,9 @@ class EdgeView(ctx: Context) : View(ctx) {
         val g = glow
         drawShapeFill(c, g)
         if (touchShow && !expandedTarget) {
-            // the invisible idle grab square, dashed in the accent colour (a settings aid, never in the way)
-            val s = grabPx.toFloat()
-            touchRect.set(width - s, height - s, width.toFloat(), height.toFloat())
+            // the invisible idle touch area, dashed in the accent colour in the bean's own shape (a settings aid)
             touchPaint.color = (accent and 0xFFFFFF) or (0x88 shl 24)
-            c.drawRect(touchRect, touchPaint)
+            c.drawPath(touchPath, touchPaint)
         }
         val ia = 1f - progress * 3f
         if (liveWanted && !expandedTarget) {
@@ -3094,6 +3153,7 @@ class EdgeView(ctx: Context) : View(ctx) {
 
     init {
         floatOn = Prefs.floatOn(ctx)
+        floatCornerFrac = Prefs.floatCorner(ctx).let { if (it < 0) -1f else it / 100f }
         mirror = Prefs.sideLeft(ctx)
         Geo.mirror = mirror
         placeX = placeXFor(ctx)

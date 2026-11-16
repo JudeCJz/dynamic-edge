@@ -1,4 +1,4 @@
-# Dynamic Edge - handoff (2026-11-10, 23:30)
+# Dyn Edge - handoff (2026-11-10, 23:30)
 
 Android corner-widget overlay, package `com.dynedge`, project `D:\VS\PROJECTS\FREE WORK\dynamic-edge`.
 A bean in the bottom-right screen corner opens into a quarter-circle radial panel with swipeable windows.
@@ -85,6 +85,45 @@ Verified on the phone: Home categories are drop-downs (one open at a time, sub-r
 page scrolled to that section); category pages are flat; the preview now draws a stage with the edge in its
 corner; "Themed" is now "Monochrome" and the App icons choice is also on the Apps page.
 Built but not checked on screen: DEVICE badges on one line with the battery badge, AppPickerActivity icons.
+
+## Status 2026-11-16 08:05 (Claude, v1.8.0 rebuilt + installed, not committed)
+Follow-ups on top of the 08:00 notes below:
+- Live test: starting one test stops any running one (one at a time).
+- Pixel mode switch + Pixel size now sit in the Look/colour section (not in the top block); top block = Dyn Edge
+  on/off + Restart only.
+- Visualiser "cava" deleted (VIZ_STYLES = bars, spectrum, wave, dots; a stored removed id falls back to spectrum).
+  "bars" now anchored at 0.42 s and growing outward up to 0.45 s long.
+- Sync: IdleVisualizer delay = hidden AudioManager.getOutputLatency(STREAM_MUSIC) + 16 ms - half the FFT window
+  (falls back to 60 / 180 ms BT, BT never below 180); release smoothing 70 ms. Not checked by ear.
+- Speed slider moved under Idle/Active size (Motion section removed). Each settings category is one rounded box
+  (Skin.BOX), nothing boxed inside it. Saved looks = last section of the main page (T_LOOKS). Settings page: the
+  "Pause in apps" caption is gone, only the "Sensitive apps" row + Live test remain.
+- Later: settings rows slide + fade in/out (Studio.smoothRows LayoutTransition on every section box; page glides);
+  Windows section is a drop-down (Studio.windowsOpen, closed by default); Long press is its own box (T_LONG);
+  idle touch area = the bean outline grown to the Touch area size (EdgeView.publishRegion, touchPath for the
+  dashed preview), checked via dumpsys touchableRegion. Released as v1.8.0 on GitHub, repo made public, README
+  showcase with docs/screenshots/.
+
+## Status 2026-11-16 08:00 (Claude, v1.8.0 installed, not committed)
+App renamed Dyn Edge (label, strings, docs, rootProject DynEdge; package com.dynedge and folder unchanged).
+- Main page top: "Dyn Edge" on/off switch (Prefs.KEY_EDGE_ON; EdgeService.applyEdgeOn detaches/attaches),
+  "Restart Dyn Edge" (EdgeService.instance.restart(): stops live tests, drops and rebuilds the window; if the service
+  is down, bounces it with A11yGate), "Pixel mode" switch + Pixel size slider (moved from the bottom).
+- Pixel mode is overlay only now: PixelMode.on() is false for any Activity context, so app screens stay smooth.
+- One edge on screen: EdgeService tracks every addView in `added` and removes strays before adding / on detach
+  (old detach skipped views not yet attached -> duplicate edge after fast floating toggles). Verified: 1 window after
+  10 rapid float/pixel toggles.
+- Live test: stop bug fixed (keys were double-prefixed, so stop never removed the LiveBus entry); a filled Stop
+  button replaces the row's play icon while running; adb hook `--es live_test <id>|stop` in MainActivity.
+- Live arc 7 dp for every activity; floating trims the arc to stay inside the rounded ends (seen on phone).
+- Floating "Corner" slider (Prefs.KEY_FLOAT_CORNER 0..100, -1 = old fixed 16 dp); open-panel X moves along the
+  diagonal to stay inside the rounded corner (seen at 100).
+- Opacity slider: fast path (EdgeView.setOpacityPct) only changes the layer paint alpha, no layer re-create.
+- Every Studio slider with a default (tick) has a reset icon (ic_undo), faint when already at default.
+- Blur slider removed (Prefs.blur() always 0). Body colour row now above Edge colour.
+- Long press: new "Toggle" action (Prefs.LA_TILE + KEY_LONG_TILE) with a scrolling picker of every usable tile.
+- Visualiser "rays" replaced by "cava" (Looks.kt, 10 thick bars, travelling ripple, rise fast / fall slow).
+NOT tested by hand: everything above beyond the screenshots noted; user is testing on the phone.
 
 ## Status 2026-11-16 00:32 (Claude, v1.5.0 installed)
 - v1.4.0 crashed on opening settings: Studio.LONG_ACTIONS was a stored val declared after init{} (null while the page

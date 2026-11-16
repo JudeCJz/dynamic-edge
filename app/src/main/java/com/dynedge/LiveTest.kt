@@ -71,16 +71,27 @@ object LiveTest {
         }
         if (!EdgeService.connected) return "Edge service is off"
         val v = view ?: return "Edge is not showing"
+        // one test at a time: starting a new one ends whatever was running
+        if (stops.isNotEmpty() || demoMusic) stopAll()
         start(ctx.applicationContext, v, id)
         return null
     }
 
+    /** True while any effect is running. */
+    fun anyRunning(): Boolean = stops.isNotEmpty() || demoMusic
+
+    /** Ends every effect at once and clears any test entry left on the bus. */
     fun stopAll() {
         for (id in stops.keys.toList()) stop(id)
+        for ((_, r) in tickers) main.removeCallbacks(r)
+        tickers.clear()
+        owned.clear()
+        LiveBus.removeIf { it.startsWith(PREFIX) }
         if (demoMusic) {
             demoMusic = false
             view?.testRefreshIdle()
         }
+        listener?.invoke()
     }
 
     // ---------------------------------------------------------------- effects
@@ -135,7 +146,7 @@ object LiveTest {
     private fun stop(id: String) {
         stops.remove(id)?.let { main.removeCallbacks(it) }
         tickers.remove(id)?.let { main.removeCallbacks(it) }
-        for (k in owned.remove(id).orEmpty()) LiveBus.remove(realKey(k))
+        for (k in owned.remove(id).orEmpty()) LiveBus.remove(k)
         when (id) {
             MUSIC -> {
                 demoMusic = false

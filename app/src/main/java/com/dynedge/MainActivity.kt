@@ -28,6 +28,11 @@ class MainActivity : Activity() {
             for ((k, v) in Prefs.prefs(this).all) android.util.Log.i("DynEdgePrefs", "$k=$v")
             return true
         }
+        // adb test hook: --es live_test <id> toggles one Live test effect (LiveTest ids), "stop" ends them all
+        intent.getStringExtra("live_test")?.let { id ->
+            if (id == "stop") LiveTest.stopAll() else LiveTest.toggle(this, id)
+            return true
+        }
         if (sp == null && pv == null) return false
         val e = edit()
         if (sp != null) {
