@@ -86,6 +86,14 @@ page scrolled to that section); category pages are flat; the preview now draws a
 corner; "Themed" is now "Monochrome" and the App icons choice is also on the Apps page.
 Built but not checked on screen: DEVICE badges on one line with the battery badge, AppPickerActivity icons.
 
+## Status 2026-11-17 (Claude, v1.9.3 released)
+- Sensitive apps: the full pause (removing the service from the accessibility list) needs WRITE_SECURE_SETTINGS,
+  which only adb can grant; without it gate() used to un-hide at once (this is what happened on the Nothing, a
+  plain install). Now: softPaused keeps the edge hidden while that app is in front; checkSensitiveFront() also
+  runs on window-list changes (root active window) to catch apps reached without a window-state event, and
+  ends the soft pause when another app (not systemui / IME) is in front. Settings row says "hide only".
+- Not tested on a phone (user asked to release without testing).
+
 ## Status 2026-11-16 19:00 (Claude, v1.9.2 installed on vivo, committed, NOT released)
 - EdgeActions.kt: one action list for Long press AND the new Double tap box (Studio.longPressPanel(box, double)).
   New ids: prev_app, back, home, split, play_pause, next_track, prev_track, camera, ringer, dnd, rotation,

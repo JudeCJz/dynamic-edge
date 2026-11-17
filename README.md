@@ -61,6 +61,13 @@ or uninstall it from every space, then install again.
 Updating: install the new APK over the old one, and your settings stay. Versions before 1.8.1 were signed
 differently, so uninstall those once before installing 1.8.1 or later.
 
+**Sensitive apps (banking, UPI):** Dyn Edge hides itself while they are open. To pause it fully, so apps such as
+BHIM do not see an accessibility service at all, give it one extra permission once from a computer:
+
+```
+adb shell pm grant com.dynedge android.permission.WRITE_SECURE_SETTINGS
+```
+
 With a computer, `tools/install.ps1` installs the APK over adb and grants everything in one step.
 
 ## Build

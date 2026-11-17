@@ -1703,7 +1703,8 @@ class Studio(private val a: Activity, private val mode: String = MODE_MAIN) {
         val on = Prefs.pauseOn(a)
         val n = Prefs.pauseApps(a).size
         val summary = when {
-            !A11yGate.canWrite(a) -> "Needs secure settings"
+            // without the adb-only grant the edge is hidden in those apps but the service stays on
+            !A11yGate.canWrite(a) -> "$n app" + (if (n == 1) "" else "s") + ", hide only (full pause needs adb)"
             !RecentApps.hasAccess(a) -> "Needs usage access"
             n == 0 -> "No apps"
             n == 1 -> "1 app"

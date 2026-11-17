@@ -258,9 +258,46 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         gating = true
         edge?.setHidden(true)
         if (!PauseGate.pause(this, pkg)) {
+            // no secure-settings grant (a phone without adb, e.g. a friend's): the service cannot take itself
+            // out of the accessibility list, so at least keep the edge hidden while that app is in front
             gating = false
+            softPaused = pkg
             updateHidden()
         }
+    }
+
+    /** A sensitive app is in front and the full pause was not possible: the edge stays hidden until it leaves. */
+    private var softPaused: String? = null
+
+    /** The package of the window the user is in now, or null when unknown. */
+    private fun activePkg(): String? = try {
+        rootInActiveWindow?.packageName?.toString()
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Second detection path (window list changes, e.g. coming back through Recents or a notification without a
+     * window-state event): pause for a sensitive app in front, and end a soft pause once another app is in front.
+     */
+    private fun checkSensitiveFront() {
+        val set = pauseSet
+        val front = activePkg()
+        if (front != null && set.isNotEmpty() && front in set && !gating && softPaused != front) {
+            gate(front)
+            return
+        }
+        val sp = softPaused ?: return
+        if (front != null && front != sp && front !in set && front != "com.android.systemui" && !isImePkg(front)) {
+            softPaused = null
+        }
+    }
+
+    private fun isImePkg(pkg: String): Boolean = try {
+        val im = getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+        im?.enabledInputMethodList?.any { it.packageName == pkg } == true
+    } catch (e: Exception) {
+        false
     }
 
     /** At connect: if a paused app is already in front, go off before building anything. */
@@ -279,6 +316,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
     private var windowsPosted = false
     private val windowsRunnable = Runnable {
         windowsPosted = false
+        checkSensitiveFront()
         updateHidden()
     }
 
@@ -463,7 +501,13 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
                 if (set.isEmpty()) return
                 val p = event.packageName ?: return
                 val hit = if (p is String) p in set else p.toString() in set
-                if (hit) gate(p.toString())
+                if (hit) {
+                    if (softPaused == null) gate(p.toString())
+                } else if (softPaused != null) {
+                    // another app may have come to the front: re-check the active window before showing again
+                    checkSensitiveFront()
+                    updateHidden()
+                }
             }
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
                 // notificationTimeout is 0 (for the gate), so window bursts are coalesced here instead
@@ -613,7 +657,7 @@ class EdgeService : AccessibilityService(), EdgeView.Host {
         val top = LiveBus.top()
         val ringing = top != null && top.kind == LiveActivity.Kind.CALL && top.answer != null
         val fs = fullscreen && !ringing && Prefs.prefs(this).getBoolean("hide_fullscreen", true)
-        edge?.setHidden(imeVisible || locked || screenOff || fs)
+        edge?.setHidden(imeVisible || locked || screenOff || fs || softPaused != null)
     }
 
     private fun readTipRadius(): Float {
